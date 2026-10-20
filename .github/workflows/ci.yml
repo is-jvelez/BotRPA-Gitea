@@ -1,0 +1,117 @@
+# CI de la PoC (en producción será Azure DevOps). No publica imágenes ni usa secretos reales.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# Permisos mínimos para el GITHUB_TOKEN.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: "true"
+  DOTNET_CLI_TELEMETRY_OPTOUT: "true"
+  # Mismo tag de SQL Server que se usa en local y en los tests de Testcontainers.
+  MSSQL_TAG: 2022-CU27-ubuntu-22.04
+
+jobs:
+  build-test:
+    name: Build y tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.x
+
+      - name: Restore
+        run: dotnet restore Bots.sln
+
+      # TreatWarningsAsErrors está en Directory.Build.props: cualquier warning rompe el build.
+      - name: Build (Release, warnings como errores)
+        run: dotnet build Bots.sln -c Release --no-restore
+
+      # Los tests de PlaywrightRepoSource usan fixtures HTML locales (el CI no alcanza el Gitea del
+      # desarrollador) pero necesitan el navegador. Versión alineada con el paquete Microsoft.Playwright.
+      - name: Instalar Chromium de Playwright
+        run: pwsh tests/Bots.Infrastructure.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
+
+      # Los tests de SQL levantan SQL Server con Testcontainers (Docker viene en el runner).
+      # La prueba contra un Gitea real se omite: no hay variables GITEA_E2E_*.
+      - name: Tests
+        run: >
+          dotnet test --solution Bots.sln -c Release --no-build
+          --report-xunit-trx
+          --results-directory TestResults
+          --results-directory-layout per-module
+
+      - name: Publicar resultados (.trx)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults/**/*.trx
+          if-no-files-found: warn
+
+  flyway-validate:
+    name: Migraciones Flyway (camino real)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # .env efímero para este job: contraseñas aleatorias que solo viven en el runner. El resto de
+      # variables (Gitea, cron) quedan con los placeholders de .env.example: el bot no se levanta aquí.
+      - name: Preparar .env de CI
+        run: |
+          cp .env.example .env
+          pw() { echo "Ci7-$(openssl rand -hex 12)"; }
+          sed -i -E \
+            -e "s|^MSSQL_TAG=[^ ]*|MSSQL_TAG=${MSSQL_TAG}|" \
+            -e "s|^MSSQL_SA_PASSWORD=CAMBIAR_ESTO|MSSQL_SA_PASSWORD=$(pw)|" \
+            -e "s|^FLYWAY_DB_PASSWORD=CAMBIAR_ESTO|FLYWAY_DB_PASSWORD=$(pw)|" \
+            -e "s|^APP_DB_PASSWORD=CAMBIAR_ESTO|APP_DB_PASSWORD=$(pw)|" \
+            .env
+
+      - name: Levantar SQL Server
+        run: docker compose up -d --build --wait sql
+
+      # El MISMO sql-init del compose (crea BotsDb, bots_app_role y los usuarios). Se ejecuta dos veces
+      # para comprobar que es idempotente.
+      - name: sql-init (dos veces)
+        run: |
+          docker compose run --rm --no-deps sql-init
+          docker compose run --rm --no-deps sql-init
+
+      - name: flyway migrate
+        run: docker compose run --rm --no-deps flyway migrate
+
+      - name: flyway validate
+        run: docker compose run --rm --no-deps flyway validate
+
+      - name: Logs si falla
+        if: failure()
+        run: docker compose logs --no-color sql
+
+      - name: Limpiar
+        if: always()
+        run: docker compose down -v
+
+  docker-build:
+    name: Imagen del bot (sin push)
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: docker build (target runtime)
+        run: docker build --target runtime -t bots-bot:ci .
