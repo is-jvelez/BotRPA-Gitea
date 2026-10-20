@@ -1,0 +1,11 @@
+# Evita enviar secretos y artefactos locales al contexto de build de Docker.
+.env
+*.env.local
+**/bin/
+**/obj/
+**/TestResults/
+.git/
+.vs/
+.vscode/
+.idea/
+.playwright/

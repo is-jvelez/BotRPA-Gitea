@@ -1,0 +1,106 @@
+name: bots
+
+# Orden de arranque: sql (healthy) -> sql-init (termina OK) -> flyway (termina OK) -> bot.
+# Todos los valores sensibles vienen de .env (ver .env.example). La red es la red interna
+# por defecto del proyecto compose.
+
+services:
+  sql:
+    build:
+      context: .
+      target: sqlserver
+      args:
+        MSSQL_TAG: ${MSSQL_TAG:-2022-latest}
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Falta MSSQL_SA_PASSWORD en .env}
+    volumes:
+      - mssql-data:/var/opt/mssql
+    ports:
+      # Solo accesible desde la máquina local.
+      - "127.0.0.1:1433:1433"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -C -b -Q \"SELECT 1\" -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+
+  # Ejecución única e idempotente (se puede relanzar): base, rol y usuarios.
+  # Usa sa solo aquí. Las contraseñas llegan como variables de entorno, que sqlcmd expone
+  # como variables de script $(NOMBRE) (en YAML se escriben $$(NOMBRE) para que compose
+  # no las interpole).
+  sql-init:
+    build:
+      context: .
+      target: sqlserver
+      args:
+        MSSQL_TAG: ${MSSQL_TAG:-2022-latest}
+    depends_on:
+      sql:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      SQLCMDPASSWORD: ${MSSQL_SA_PASSWORD:?Falta MSSQL_SA_PASSWORD en .env}
+      APP_DB_USER: ${APP_DB_USER:?Falta APP_DB_USER en .env}
+      APP_DB_PASSWORD: ${APP_DB_PASSWORD:?Falta APP_DB_PASSWORD en .env}
+      FLYWAY_DB_USER: ${FLYWAY_DB_USER:?Falta FLYWAY_DB_USER en .env}
+      FLYWAY_DB_PASSWORD: ${FLYWAY_DB_PASSWORD:?Falta FLYWAY_DB_PASSWORD en .env}
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        set -euo pipefail
+        cat > /tmp/sql-init.sql <<'SQL'
+        IF DB_ID(N'BotsDb') IS NULL
+            CREATE DATABASE BotsDb;
+        GO
+        USE BotsDb;
+        GO
+        -- Rol de la app sin permisos: los GRANT los hace la migración V1.
+        IF DATABASE_PRINCIPAL_ID(N'bots_app_role') IS NULL
+            CREATE ROLE bots_app_role;
+        GO
+        -- Usuario de la app: solo miembro de bots_app_role (sin DDL).
+        IF SUSER_ID(N'$$(APP_DB_USER)') IS NULL
+            CREATE LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
+        ELSE
+            ALTER LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD)';
+        IF DATABASE_PRINCIPAL_ID(N'$$(APP_DB_USER)') IS NULL
+            CREATE USER [$$(APP_DB_USER)] FOR LOGIN [$$(APP_DB_USER)];
+        IF IS_ROLEMEMBER(N'bots_app_role', N'$$(APP_DB_USER)') = 0
+            ALTER ROLE bots_app_role ADD MEMBER [$$(APP_DB_USER)];
+        GO
+        -- Usuario de Flyway: db_owner de BotsDb, sin permisos de servidor.
+        IF SUSER_ID(N'$$(FLYWAY_DB_USER)') IS NULL
+            CREATE LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
+        ELSE
+            ALTER LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD)';
+        IF DATABASE_PRINCIPAL_ID(N'$$(FLYWAY_DB_USER)') IS NULL
+            CREATE USER [$$(FLYWAY_DB_USER)] FOR LOGIN [$$(FLYWAY_DB_USER)];
+        IF IS_ROLEMEMBER(N'db_owner', N'$$(FLYWAY_DB_USER)') = 0
+            ALTER ROLE db_owner ADD MEMBER [$$(FLYWAY_DB_USER)];
+        GO
+        SQL
+        /opt/mssql-tools18/bin/sqlcmd -S sql -U sa -C -b -i /tmp/sql-init.sql
+        echo "sql-init: BotsDb, bots_app_role y usuarios listos."
+
+  flyway:
+    image: flyway/flyway:13.10.3
+    depends_on:
+      sql-init:
+        condition: service_completed_successfully
+    command: migrate
+    environment:
+      # TrustServerCertificate solo para el SQL Server local de la PoC (certificado
+      # autofirmado del contenedor). En Azure se valida el certificado.
+      FLYWAY_URL: jdbc:sqlserver://sql:1433;databaseName=BotsDb;encrypt=true;trustServerCertificate=true
+      FLYWAY_USER: ${FLYWAY_DB_USER:?Falta FLYWAY_DB_USER en .env}
+      FLYWAY_PASSWORD: ${FLYWAY_DB_PASSWORD:?Falta FLYWAY_DB_PASSWORD en .env}
+      FLYWAY_LOCATIONS: filesystem:/flyway/sql
+      FLYWAY_VALIDATE_MIGRATION_NAMING: "true"
+      REDGATE_DISABLE_TELEMETRY: "true"
+    volumes:
+      - ./flyway/sql:/flyway/sql:ro
+
+volumes:
+  mssql-data:
