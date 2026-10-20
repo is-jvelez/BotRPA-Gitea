@@ -1,0 +1,36 @@
+# --- Secretos / configuración local ---
+.env
+*.env.local
+appsettings.*.local.json
+secrets.json
+
+# --- Build .NET ---
+bin/
+obj/
+out/
+publish/
+*.user
+*.suo
+
+# --- Tests ---
+TestResults/
+*.trx
+coverage*/
+*.coverage
+
+# --- Volúmenes / datos locales de Docker ---
+.data/
+volumes/
+mssql-data/
+
+# --- Playwright (navegadores y trazas locales) ---
+.playwright/
+playwright-traces/
+
+# --- IDE / SO ---
+.vs/
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+.DS_Store

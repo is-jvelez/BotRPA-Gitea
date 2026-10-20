@@ -1,0 +1,3 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Núcleo del dominio: sin referencias a proyectos ni paquetes NuGet. -->
+</Project>
