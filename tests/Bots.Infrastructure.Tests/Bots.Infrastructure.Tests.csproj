@@ -20,4 +20,9 @@
     <Using Include="Xunit" />
   </ItemGroup>
 
+  <ItemGroup>
+    <!-- Las mismas migraciones que aplica Flyway: los tests corren contra el esquema real. -->
+    <None Include="..\..\flyway\sql\*.sql" LinkBase="flyway" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+
 </Project>
