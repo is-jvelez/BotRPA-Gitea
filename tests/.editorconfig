@@ -1,0 +1,5 @@
+# Reglas solo para los proyectos de test.
+
+[*.cs]
+# Los nombres de test describen el caso con guiones bajos (Orphan_Running_is_marked_Abandoned...).
+dotnet_diagnostic.CA1707.severity = none

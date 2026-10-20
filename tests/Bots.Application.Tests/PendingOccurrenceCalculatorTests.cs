@@ -70,6 +70,25 @@ public sealed class PendingOccurrenceCalculatorTests
     }
 
     [Fact]
+    public async Task Long_outage_returns_the_latest_and_logs_only_the_first_skipped()
+    {
+        // Un año caído con un cron de 5 minutos: 105 120 ocurrencias en el rango.
+        _jobRuns.Seed(Job, At(10, 0), JobRunStatus.Succeeded);
+        var latest = At(10, 0).AddYears(1);
+        _time.SetUtcNow(latest);
+
+        var pending = await CreateCalculator().GetPendingAsync(Job, TestContext.Current.CancellationToken);
+
+        Assert.Equal(latest, pending);
+        var warning = Assert.Single(_logger.Entries, e => e.Level == LogLevel.Warning);
+        Assert.Contains("105120 ocurrencias pendientes", warning.Message);
+        Assert.Contains("se omiten 105119", warning.Message);
+        Assert.Contains(At(11, 40).ToString("o"), warning.Message);       // la 20.ª omitida
+        Assert.DoesNotContain(At(11, 45).ToString("o"), warning.Message); // la 21.ª ya no se lista
+        Assert.EndsWith("(y 105099 más)", warning.Message);
+    }
+
+    [Fact]
     public async Task Previously_failed_occurrence_is_retried()
     {
         _jobRuns.Seed(Job, At(10, 0), JobRunStatus.Succeeded);

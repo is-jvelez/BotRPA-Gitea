@@ -26,16 +26,16 @@ public sealed class CronosSchedule : ISchedule
     public DateTimeOffset? GetNextOccurrence(DateTimeOffset fromUtc) =>
         _expression.GetNextOccurrence(fromUtc, _timeZone, inclusive: false)?.ToUniversalTime();
 
-    public IReadOnlyList<DateTimeOffset> GetOccurrences(DateTimeOffset fromUtcExclusive, DateTimeOffset toUtcInclusive)
+    public IEnumerable<DateTimeOffset> GetOccurrences(DateTimeOffset fromUtcExclusive, DateTimeOffset toUtcInclusive)
     {
         if (toUtcInclusive <= fromUtcExclusive)
         {
             return [];
         }
 
+        // Sin ToList: Cronos las genera bajo demanda.
         return _expression
             .GetOccurrences(fromUtcExclusive, toUtcInclusive, _timeZone, fromInclusive: false, toInclusive: true)
-            .Select(o => o.ToUniversalTime())
-            .ToList();
+            .Select(o => o.ToUniversalTime());
     }
 }

@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.RegularExpressions;
 using Bots.Infrastructure.Resilience;
 using Bots.Infrastructure.Sql;
@@ -60,7 +61,7 @@ public sealed partial class SqlServerFixture : IAsyncLifetime
             await connection.ExecuteAsync($"ALTER ROLE bots_app_role ADD MEMBER [{AppUser}];");
 
             foreach (var file in Directory.GetFiles(Path.Combine(AppContext.BaseDirectory, "flyway"), "V*__*.sql")
-                         .OrderBy(f => int.Parse(MigrationVersion().Match(Path.GetFileName(f)).Groups[1].Value)))
+                         .OrderBy(f => int.Parse(MigrationVersion().Match(Path.GetFileName(f)).Groups[1].Value, CultureInfo.InvariantCulture)))
             {
                 foreach (var batch in GoSeparator().Split(await File.ReadAllTextAsync(file)).Where(b => !string.IsNullOrWhiteSpace(b)))
                 {

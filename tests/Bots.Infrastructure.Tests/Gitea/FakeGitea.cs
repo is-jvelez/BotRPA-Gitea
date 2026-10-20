@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Net;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -146,7 +147,7 @@ public sealed class FakeGitea : IAsyncDisposable
             2 => Home(repo, key),
             3 when parts[2] == "branches" => BranchesPage(repo, key, PageNumber(http)),
             3 when parts[2] == "pulls" && !repo.PullsDisabled => Fixture("pulls.html")
-                .Replace("{{OPEN}}", repo.OpenPulls.ToString()).Replace("{{CLOSED}}", repo.ClosedPulls.ToString()),
+                .Replace("{{OPEN}}", repo.OpenPulls.ToString(CultureInfo.InvariantCulture)).Replace("{{CLOSED}}", repo.ClosedPulls.ToString(CultureInfo.InvariantCulture)),
             4 when parts[2] == "src" && parts[3].StartsWith("branch/", StringComparison.Ordinal) => BranchPage(repo, key, parts[3]["branch/".Length..]),
             _ => null,
         };
@@ -209,7 +210,7 @@ public sealed class FakeGitea : IAsyncDisposable
             .Select(r => Fixture("repo-item.html").Replace("{{KEY}}", $"{User}/{r.Name}").Replace("{{NAME}}", r.Name));
 
         return Fixture("repos.html")
-            .Replace("{{TOTAL}}", (ReposCounterOverride ?? Repos.Count).ToString())
+            .Replace("{{TOTAL}}", (ReposCounterOverride ?? Repos.Count).ToString(CultureInfo.InvariantCulture))
             .Replace("{{ITEMS}}", string.Join(Environment.NewLine, items));
     }
 
@@ -231,7 +232,7 @@ public sealed class FakeGitea : IAsyncDisposable
             .Replace("{{KEY}}", key)
             .Replace("{{DEFAULT}}", defaultBranch.Name)
             .Replace("{{DEFAULT_COMMITS}}", defaultBranch.CommitCountText)
-            .Replace("{{BRANCHES}}", repo.Branches.Count(b => !b.Deleted).ToString())
+            .Replace("{{BRANCHES}}", repo.Branches.Count(b => !b.Deleted).ToString(CultureInfo.InvariantCulture))
             .Replace("{{FILES}}", string.Join(Environment.NewLine, files))
             .Replace("{{DESCRIPTION}}", description);
 
@@ -260,7 +261,7 @@ public sealed class FakeGitea : IAsyncDisposable
                 .Replace("{{KEY}}", key)
                 .Replace("{{BRANCH_HREF}}", EscapePath(branch.Name))
                 .Replace("{{COUNT}}", branch.CommitCountText)
-                .Replace("{{BRANCHES}}", repo.Branches.Count(b => !b.Deleted).ToString());
+                .Replace("{{BRANCHES}}", repo.Branches.Count(b => !b.Deleted).ToString(CultureInfo.InvariantCulture));
     }
 
     private static int PageNumber(HttpContext http) =>

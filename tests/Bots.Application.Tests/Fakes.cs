@@ -191,15 +191,12 @@ internal sealed class FakeSchedule(TimeSpan interval) : ISchedule
         return new DateTimeOffset(ticks, TimeSpan.Zero);
     }
 
-    public IReadOnlyList<DateTimeOffset> GetOccurrences(DateTimeOffset fromUtcExclusive, DateTimeOffset toUtcInclusive)
+    public IEnumerable<DateTimeOffset> GetOccurrences(DateTimeOffset fromUtcExclusive, DateTimeOffset toUtcInclusive)
     {
-        var result = new List<DateTimeOffset>();
         for (var next = GetNextOccurrence(fromUtcExclusive); next <= toUtcInclusive; next = GetNextOccurrence(next!.Value))
         {
-            result.Add(next!.Value);
+            yield return next!.Value;
         }
-
-        return result;
     }
 }
 

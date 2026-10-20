@@ -8,7 +8,7 @@ namespace Bots.Application;
 /// Sincroniza todos los repos de la fuente hacia el almacén para una ocurrencia programada.
 /// Un fallo en un repo no aborta los demás; solo un fallo fatal (listado, BD) aborta la corrida.
 /// </summary>
-public sealed class SyncReposJob(
+public sealed partial class SyncReposJob(
     IRepoSource source,
     IRepoStore store,
     IJobRunStore jobRuns,
@@ -28,9 +28,7 @@ public sealed class SyncReposJob(
         await using var lease = await jobRuns.TryStartAsync(options.JobName, scheduledForUtc, ct);
         if (lease is null)
         {
-            logger.LogInformation(
-                "No se inicia {JobName} para {ScheduledForUtc:o}: otra instancia tiene el lock, la ocurrencia ya está completada o se agotaron los intentos.",
-                options.JobName, scheduledForUtc);
+            LogNotStarted(logger, options.JobName, scheduledForUtc);
             return null;
         }
 
@@ -56,7 +54,7 @@ public sealed class SyncReposJob(
             var keys = (await source.ListRepoKeysAsync(ct))
                 .Distinct(StringComparer.OrdinalIgnoreCase)
                 .ToList();
-            logger.LogInformation("Corrida iniciada (intento {Attempt}): {RepoCount} repos a procesar.", run.Attempt, keys.Count);
+            LogRunStarted(logger, run.Attempt, keys.Count);
 
             if (keys.Count == 0)
             {
@@ -88,17 +86,16 @@ public sealed class SyncReposJob(
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
         {
-            logger.LogWarning(
-                "Corrida cancelada por apagado tras {ReposOk} repos OK y {ReposFailed} fallidos. Queda Abandoned; la ocurrencia se retomará con un nuevo intento.",
-                ok, failedRepos.Count);
+            LogCancelled(logger, ok, failedRepos.Count);
             await TryCompleteAsync(run, JobRunStatus.Abandoned, ok, failedRepos.Count, "Cancelada por apagado ordenado antes de terminar.");
             throw;
         }
         catch (Exception ex)
         {
-            logger.LogError(ex, "Fallo fatal en la corrida: {ErrorType}. Se marca Failed; la ocurrencia se reintentará.", ex.GetType().Name);
+            var errorType = ex.GetType().Name;
+            LogFatal(logger, ex, errorType);
             await TryAddErrorAsync(run, ex);
-            await TryCompleteAsync(run, JobRunStatus.Failed, ok, failedRepos.Count, Truncate($"Fallo fatal: {ex.GetType().Name}: {ex.Message}"));
+            await TryCompleteAsync(run, JobRunStatus.Failed, ok, failedRepos.Count, Truncate($"Fallo fatal: {errorType}: {ex.Message}"));
             return new SyncReposResult(run.Id, run.Attempt, JobRunStatus.Failed, ok, failedRepos.Count);
         }
     }
@@ -116,7 +113,7 @@ public sealed class SyncReposJob(
             }
 
             await store.UpsertAsync(snapshot, run.Id, ct);
-            logger.LogDebug("Repo sincronizado: {BranchCount} ramas, {PullRequestCount} PRs.", snapshot.BranchCount, snapshot.PullRequestCount);
+            LogRepoSynced(logger, snapshot.BranchCount, snapshot.PullRequestCount);
             return null;
         }
         catch (OperationCanceledException) when (ct.IsCancellationRequested)
@@ -125,10 +122,11 @@ public sealed class SyncReposJob(
         }
         catch (Exception ex)
         {
-            logger.LogWarning(ex, "Fallo al procesar el repo {RepoKey} ({ErrorType}); se continúa con el resto.", key, ex.GetType().Name);
+            var errorType = ex.GetType().Name;
+            LogRepoFailed(logger, ex, key, errorType);
             // Si registrar el error falla (p. ej. BD caída) la excepción sube y la corrida es fatal.
-            await jobRuns.AddErrorAsync(run, key, ex.GetType().Name, ex.Message, ct);
-            return $"{key} ({ex.GetType().Name})";
+            await jobRuns.AddErrorAsync(run, key, errorType, ex.Message, ct);
+            return $"{key} ({errorType})";
         }
     }
 
@@ -136,13 +134,13 @@ public sealed class SyncReposJob(
     {
         if (options.AllowEmptySource)
         {
-            logger.LogWarning("La fuente devolvió 0 repos y AllowEmptySource=true: la corrida se da por Succeeded.");
+            LogEmptyAllowed(logger);
             await jobRuns.CompleteAsync(run, JobRunStatus.Succeeded, 0, 0, null, ct);
             return new SyncReposResult(run.Id, run.Attempt, JobRunStatus.Succeeded, 0, 0);
         }
 
         const string summary = "La fuente devolvió 0 repos. Posible fallo del scraping (login, selectores) o usuario sin repos. Ver runbook: 'Failed por 0 repos'.";
-        logger.LogError("Corrida Failed: {ErrorSummary}", summary);
+        LogEmptyFailed(logger, summary);
         await jobRuns.AddErrorAsync(run, null, "EmptySource", summary, ct);
         await jobRuns.CompleteAsync(run, JobRunStatus.Failed, 0, 0, summary, ct);
         return new SyncReposResult(run.Id, run.Attempt, JobRunStatus.Failed, 0, 0);
@@ -153,17 +151,13 @@ public sealed class SyncReposJob(
         switch (status)
         {
             case JobRunStatus.Succeeded:
-                logger.LogInformation("Corrida Succeeded: {ReposOk} repos sincronizados.", ok);
+                LogSucceeded(logger, ok);
                 break;
             case JobRunStatus.PartiallyFailed:
-                logger.LogWarning(
-                    "Corrida PartiallyFailed: {ReposOk} OK, {ReposFailed} fallidos. Detalle en bots.job_run_errors (job_run_id={JobRunId}, attempt={Attempt}). {ErrorSummary}",
-                    ok, failed, run.Id, run.Attempt, summary);
+                LogPartiallyFailed(logger, ok, failed, run.Id, run.Attempt, summary);
                 break;
             default:
-                logger.LogError(
-                    "Corrida {Status}: {ReposOk} OK, {ReposFailed} fallidos. Detalle en bots.job_run_errors (job_run_id={JobRunId}, attempt={Attempt}). {ErrorSummary}",
-                    status, ok, failed, run.Id, run.Attempt, summary);
+                LogFailedOutcome(logger, status, ok, failed, run.Id, run.Attempt, summary);
                 break;
         }
     }
@@ -176,7 +170,7 @@ public sealed class SyncReposJob(
         }
         catch (Exception logEx)
         {
-            logger.LogError(logEx, "No se pudo registrar el error fatal en bots.job_run_errors.");
+            LogAddErrorFailed(logger, logEx);
         }
     }
 
@@ -189,8 +183,7 @@ public sealed class SyncReposJob(
         }
         catch (Exception ex)
         {
-            logger.LogCritical(ex,
-                "No se pudo registrar el cierre {Status} de la corrida; queda Running y se marcará Abandoned al retomarse.", status);
+            LogCompleteFailed(logger, ex, status);
         }
     }
 
@@ -203,4 +196,43 @@ public sealed class SyncReposJob(
 
     private static string Truncate(string value) =>
         value.Length <= MaxSummaryLength ? value : value[..(MaxSummaryLength - 1)] + "…";
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "No se inicia {JobName} para {ScheduledForUtc:o}: otra instancia tiene el lock, la ocurrencia ya está completada o se agotaron los intentos.")]
+    private static partial void LogNotStarted(ILogger logger, string jobName, DateTimeOffset scheduledForUtc);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Corrida iniciada (intento {Attempt}): {RepoCount} repos a procesar.")]
+    private static partial void LogRunStarted(ILogger logger, int attempt, int repoCount);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Corrida cancelada por apagado tras {ReposOk} repos OK y {ReposFailed} fallidos. Queda Abandoned; la ocurrencia se retomará con un nuevo intento.")]
+    private static partial void LogCancelled(ILogger logger, int reposOk, int reposFailed);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Fallo fatal en la corrida: {ErrorType}. Se marca Failed; la ocurrencia se reintentará.")]
+    private static partial void LogFatal(ILogger logger, Exception exception, string errorType);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Repo sincronizado: {BranchCount} ramas, {PullRequestCount} PRs.")]
+    private static partial void LogRepoSynced(ILogger logger, int branchCount, int pullRequestCount);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Fallo al procesar el repo {RepoKey} ({ErrorType}); se continúa con el resto.")]
+    private static partial void LogRepoFailed(ILogger logger, Exception exception, string repoKey, string errorType);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "La fuente devolvió 0 repos y AllowEmptySource=true: la corrida se da por Succeeded.")]
+    private static partial void LogEmptyAllowed(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Corrida Failed: {ErrorSummary}")]
+    private static partial void LogEmptyFailed(ILogger logger, string errorSummary);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Corrida Succeeded: {ReposOk} repos sincronizados.")]
+    private static partial void LogSucceeded(ILogger logger, int reposOk);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Corrida PartiallyFailed: {ReposOk} OK, {ReposFailed} fallidos. Detalle en bots.job_run_errors (job_run_id={JobRunId}, attempt={Attempt}). {ErrorSummary}")]
+    private static partial void LogPartiallyFailed(ILogger logger, int reposOk, int reposFailed, long jobRunId, int attempt, string? errorSummary);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "Corrida {Status}: {ReposOk} OK, {ReposFailed} fallidos. Detalle en bots.job_run_errors (job_run_id={JobRunId}, attempt={Attempt}). {ErrorSummary}")]
+    private static partial void LogFailedOutcome(ILogger logger, JobRunStatus status, int reposOk, int reposFailed, long jobRunId, int attempt, string? errorSummary);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "No se pudo registrar el error fatal en bots.job_run_errors.")]
+    private static partial void LogAddErrorFailed(ILogger logger, Exception exception);
+
+    [LoggerMessage(Level = LogLevel.Critical, Message = "No se pudo registrar el cierre {Status} de la corrida; queda Running y se marcará Abandoned al retomarse.")]
+    private static partial void LogCompleteFailed(ILogger logger, Exception exception, JobRunStatus status);
 }

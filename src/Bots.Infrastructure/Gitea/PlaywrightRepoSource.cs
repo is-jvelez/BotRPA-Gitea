@@ -17,7 +17,7 @@ namespace Bots.Infrastructure.Gitea;
 /// (repos de la pestaña y ramas de la cabecera): si no cuadran, se lanza
 /// <see cref="GiteaInconsistentDataException"/>.</para>
 /// </remarks>
-public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
+public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
 {
     private readonly GiteaOptions _options;
     private readonly GiteaResilience _resilience;
@@ -96,18 +96,34 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         }
     }
 
+    /// <summary>
+    /// Cada paso se ejecuta aunque falle el anterior (p. ej. el navegador ya murió): así nunca queda vivo
+    /// el proceso del driver de Playwright. La primera excepción se propaga al final.
+    /// </summary>
     public async ValueTask DisposeAsync()
     {
-        await CloseContextAsync();
-        if (_browser is not null)
+        try
         {
-            await _browser.CloseAsync();
-            _browser = null;
+            try
+            {
+                await CloseContextAsync();
+            }
+            finally
+            {
+                var browser = _browser;
+                _browser = null;
+                if (browser is not null)
+                {
+                    await browser.CloseAsync();
+                }
+            }
         }
-
-        _playwright?.Dispose();
-        _playwright = null;
-        _gate.Dispose();
+        finally
+        {
+            _playwright?.Dispose();
+            _playwright = null;
+            _gate.Dispose();
+        }
     }
 
     // ------------------------------------------------------------------ sesión
@@ -183,7 +199,7 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
             throw new GiteaHttpException(response.Status, GiteaSelectors.LoginPath);
         }
 
-        _logger.LogInformation("Sesión iniciada en Gitea como {GiteaUser}.", _options.User);
+        LogLoggedIn(_logger, _options.User);
         return true;
     }
 
@@ -236,7 +252,7 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
                 $"Se leyeron {keys.Count} repos pero Gitea indica {expected} para '{_options.User}'.");
         }
 
-        _logger.LogInformation("Gitea: {RepoCount} repos del usuario {GiteaUser}.", keys.Count, _options.User);
+        LogReposListed(_logger, keys.Count, _options.User);
         return keys;
     }
 
@@ -257,7 +273,7 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         var parts = path.Trim('/').Split('/');
         if (parts.Length != 2 || !string.Equals(parts[0], _options.User, StringComparison.OrdinalIgnoreCase))
         {
-            _logger.LogDebug("Se ignora el enlace {Href}: no es un repo propio de {GiteaUser}.", href, _options.User);
+            LogLinkIgnored(_logger, href, _options.User);
             return null;
         }
 
@@ -372,7 +388,7 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         catch (GiteaHttpException ex) when (ex.StatusCode == 404)
         {
             // Repo con los pull requests desactivados: no tiene PRs.
-            _logger.LogDebug("'{RepoKey}' no tiene la sección de pull requests (404): 0 PRs.", key);
+            LogPullsDisabled(_logger, key);
             return 0;
         }
 
@@ -493,7 +509,7 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "No se pudo guardar el HTML de diagnóstico de {Url}.", page.Url);
+            LogDiagnosticsFailed(_logger, ex, page.Url);
             return null;
         }
     }
@@ -509,4 +525,19 @@ public sealed class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
 
         return value;
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Sesión iniciada en Gitea como {GiteaUser}.")]
+    private static partial void LogLoggedIn(ILogger logger, string giteaUser);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "Gitea: {RepoCount} repos del usuario {GiteaUser}.")]
+    private static partial void LogReposListed(ILogger logger, int repoCount, string giteaUser);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "Se ignora el enlace {Href}: no es un repo propio de {GiteaUser}.")]
+    private static partial void LogLinkIgnored(ILogger logger, string href, string giteaUser);
+
+    [LoggerMessage(Level = LogLevel.Debug, Message = "'{RepoKey}' no tiene la sección de pull requests (404): 0 PRs.")]
+    private static partial void LogPullsDisabled(ILogger logger, string repoKey);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "No se pudo guardar el HTML de diagnóstico de {Url}.")]
+    private static partial void LogDiagnosticsFailed(ILogger logger, Exception exception, string url);
 }

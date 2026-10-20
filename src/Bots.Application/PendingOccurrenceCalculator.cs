@@ -8,7 +8,7 @@ namespace Bots.Application;
 /// devuelve solo la más reciente: el job sincroniza el estado completo y es idempotente, así
 /// que ejecutar las anteriores no aportaría datos.
 /// </summary>
-public sealed class PendingOccurrenceCalculator(
+public sealed partial class PendingOccurrenceCalculator(
     ISchedule schedule,
     IJobRunStore jobRuns,
     TimeProvider timeProvider,
@@ -25,34 +25,46 @@ public sealed class PendingOccurrenceCalculator(
         var lastCompleted = await jobRuns.GetLastCompletedScheduledAsync(jobName, ct);
         if (lastCompleted is null)
         {
-            logger.LogInformation("{JobName} no tiene corridas completadas previas: no hay recuperación que hacer.", jobName);
+            LogNoHistory(logger, jobName);
             return null;
         }
 
         var now = timeProvider.GetUtcNow();
-        var missed = schedule.GetOccurrences(lastCompleted.Value, now);
-        if (missed.Count == 0)
+        // Las ocurrencias llegan en orden ascendente: con MaxSkippedToLog + 1 primeras basta para listar
+        // las omitidas (todas menos la última) sin guardar el rango completo.
+        var missed = OccurrenceWindow.From(schedule.GetOccurrences(lastCompleted.Value, now), MaxSkippedToLog + 1);
+        if (missed.Latest is not { } pending)
         {
             return null;
         }
 
-        var ordered = missed.Order().ToList();
-        var pending = ordered[^1];
-
-        if (ordered.Count > 1)
+        if (missed.Count > 1)
         {
-            var skipped = ordered.Take(ordered.Count - 1).ToList();
-            logger.LogWarning(
-                "{JobName}: {MissedCount} ocurrencias pendientes desde la última completada ({LastCompletedUtc:o}). Se ejecuta solo la más reciente ({PendingUtc:o}); se omiten {SkippedCount}: {SkippedOccurrences}{SkippedMore}",
-                jobName, ordered.Count, lastCompleted.Value, pending, skipped.Count,
-                string.Join(", ", skipped.Take(MaxSkippedToLog).Select(o => o.ToString("o"))),
-                skipped.Count > MaxSkippedToLog ? $" (y {skipped.Count - MaxSkippedToLog} más)" : string.Empty);
+            var skippedCount = missed.Count - 1;
+            if (logger.IsEnabled(LogLevel.Warning))
+            {
+                LogSkipped(
+                    logger, jobName, missed.Count, lastCompleted.Value, pending, skippedCount,
+                    string.Join(", ", missed.First.Take(Math.Min(skippedCount, MaxSkippedToLog)).Select(o => o.ToString("o"))),
+                    skippedCount > MaxSkippedToLog ? $" (y {skippedCount - MaxSkippedToLog} más)" : string.Empty);
+            }
         }
         else
         {
-            logger.LogInformation("{JobName}: ocurrencia pendiente {PendingUtc:o}.", jobName, pending);
+            LogPending(logger, jobName, pending);
         }
 
         return pending;
     }
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName} no tiene corridas completadas previas: no hay recuperación que hacer.")]
+    private static partial void LogNoHistory(ILogger logger, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{JobName}: {MissedCount} ocurrencias pendientes desde la última completada ({LastCompletedUtc:o}). Se ejecuta solo la más reciente ({PendingUtc:o}); se omiten {SkippedCount}: {SkippedOccurrences}{SkippedMore}")]
+    private static partial void LogSkipped(
+        ILogger logger, string jobName, int missedCount, DateTimeOffset lastCompletedUtc, DateTimeOffset pendingUtc,
+        int skippedCount, string skippedOccurrences, string skippedMore);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: ocurrencia pendiente {PendingUtc:o}.")]
+    private static partial void LogPending(ILogger logger, string jobName, DateTimeOffset pendingUtc);
 }

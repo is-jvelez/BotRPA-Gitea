@@ -16,7 +16,7 @@ namespace Bots.Application;
 /// <item>Ninguna excepción de una corrida detiene el bucle: se registra y se espera a la siguiente.</item>
 /// </list>
 /// </remarks>
-public sealed class SyncReposScheduler(
+public sealed partial class SyncReposScheduler(
     ISchedule schedule,
     IJobRunStore jobRuns,
     PendingOccurrenceCalculator calculator,
@@ -25,9 +25,11 @@ public sealed class SyncReposScheduler(
     TimeProvider timeProvider,
     ILogger<SyncReposScheduler> logger)
 {
+    private const int MaxOverlapToLog = 20;
+
     public async Task RunAsync(CancellationToken ct)
     {
-        logger.LogInformation("{JobName}: programador iniciado.", options.JobName);
+        LogStarted(logger, options.JobName);
         await MarkStaleRunsAsync(ct);
 
         // Ocurrencia por la que se despertó (null al arrancar: solo hay recuperación).
@@ -52,11 +54,11 @@ public sealed class SyncReposScheduler(
                 var next = schedule.GetNextOccurrence(timeProvider.GetUtcNow());
                 if (next is null)
                 {
-                    logger.LogWarning("{JobName}: la expresión cron no tiene más ocurrencias; el programador se detiene.", options.JobName);
+                    LogNoMoreOccurrences(logger, options.JobName);
                     return;
                 }
 
-                logger.LogInformation("{JobName}: siguiente ocurrencia {NextUtc:o}.", options.JobName, next.Value);
+                LogNextOccurrence(logger, options.JobName, next.Value);
                 await WaitUntilAsync(next.Value, ct);
                 due = next;
             }
@@ -66,7 +68,7 @@ public sealed class SyncReposScheduler(
             // Apagado ordenado.
         }
 
-        logger.LogInformation("{JobName}: programador detenido.", options.JobName);
+        LogStopped(logger, options.JobName);
     }
 
     private async Task MarkStaleRunsAsync(CancellationToken ct)
@@ -78,7 +80,7 @@ public sealed class SyncReposScheduler(
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             // TryStartAsync también trata las huérfanas de la ocurrencia que retome.
-            logger.LogError(ex, "{JobName}: no se pudieron marcar las corridas huérfanas al arrancar; se continúa.", options.JobName);
+            LogMarkStaleFailed(logger, ex, options.JobName);
         }
     }
 
@@ -90,7 +92,7 @@ public sealed class SyncReposScheduler(
         }
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
-            logger.LogError(ex, "{JobName}: no se pudo calcular la ocurrencia pendiente; se reintentará en el siguiente despertar.", options.JobName);
+            LogPendingFailed(logger, ex, options.JobName);
             return null;
         }
     }
@@ -104,24 +106,27 @@ public sealed class SyncReposScheduler(
         catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
         {
             // Nunca se propaga: un fallo de una corrida no debe matar el BackgroundService.
-            logger.LogError(ex,
-                "{JobName}: la corrida de {ScheduledForUtc:o} terminó con una excepción no controlada; se espera a la siguiente ocurrencia.",
-                options.JobName, occurrence);
+            LogRunFailed(logger, ex, options.JobName, occurrence);
         }
     }
 
     /// <summary>Registra las ocurrencias que llegaron mientras corría <paramref name="ran"/>. Devuelve si hubo.</summary>
     private bool LogOverlap(DateTimeOffset ran)
     {
-        var arrived = schedule.GetOccurrences(ran, timeProvider.GetUtcNow());
+        var arrived = OccurrenceWindow.From(schedule.GetOccurrences(ran, timeProvider.GetUtcNow()), MaxOverlapToLog);
         if (arrived.Count == 0)
         {
             return false;
         }
 
-        logger.LogWarning(
-            "{JobName}: {Count} ocurrencias llegaron mientras corría la de {ScheduledForUtc:o} ({Occurrences}); no se iniciaron en paralelo. Se recupera la más reciente.",
-            options.JobName, arrived.Count, ran, string.Join(", ", arrived.Select(o => o.ToString("o"))));
+        if (logger.IsEnabled(LogLevel.Warning))
+        {
+            LogOverlapped(
+                logger, options.JobName, arrived.Count, ran,
+                string.Join(", ", arrived.First.Select(o => o.ToString("o"))),
+                arrived.Count > MaxOverlapToLog ? $" y {arrived.Count - MaxOverlapToLog} más" : string.Empty);
+        }
+
         return true;
     }
 
@@ -141,4 +146,29 @@ public sealed class SyncReposScheduler(
 
     private static DateTimeOffset? Latest(DateTimeOffset? a, DateTimeOffset? b) =>
         a is null ? b : b is null ? a : (a > b ? a : b);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: programador iniciado.")]
+    private static partial void LogStarted(ILogger logger, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{JobName}: la expresión cron no tiene más ocurrencias; el programador se detiene.")]
+    private static partial void LogNoMoreOccurrences(ILogger logger, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: siguiente ocurrencia {NextUtc:o}.")]
+    private static partial void LogNextOccurrence(ILogger logger, string jobName, DateTimeOffset nextUtc);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: programador detenido.")]
+    private static partial void LogStopped(ILogger logger, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "{JobName}: no se pudieron marcar las corridas huérfanas al arrancar; se continúa.")]
+    private static partial void LogMarkStaleFailed(ILogger logger, Exception exception, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "{JobName}: no se pudo calcular la ocurrencia pendiente; se reintentará en el siguiente despertar.")]
+    private static partial void LogPendingFailed(ILogger logger, Exception exception, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "{JobName}: la corrida de {ScheduledForUtc:o} terminó con una excepción no controlada; se espera a la siguiente ocurrencia.")]
+    private static partial void LogRunFailed(ILogger logger, Exception exception, string jobName, DateTimeOffset scheduledForUtc);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{JobName}: {Count} ocurrencias llegaron mientras corría la de {ScheduledForUtc:o} ({Occurrences}{OccurrencesMore}); no se iniciaron en paralelo. Se recupera la más reciente.")]
+    private static partial void LogOverlapped(
+        ILogger logger, string jobName, int count, DateTimeOffset scheduledForUtc, string occurrences, string occurrencesMore);
 }

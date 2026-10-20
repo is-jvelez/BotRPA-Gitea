@@ -7,7 +7,7 @@ using Microsoft.Extensions.Logging;
 
 namespace Bots.Infrastructure.Sql;
 
-public sealed class SqlJobRunStore(
+public sealed partial class SqlJobRunStore(
     SqlConnectionFactory connections,
     SqlResilience resilience,
     SqlJobRunStoreOptions options,
@@ -17,16 +17,19 @@ public sealed class SqlJobRunStore(
     private const int MaxErrorTypeLength = 200;
     private const int MaxRepoKeyLength = 256;
 
+    /// <summary>La columna es NVARCHAR(MAX): se acota para que un mensaje enorme no infle la tabla. El detalle completo queda en el log.</summary>
+    internal const int MaxErrorMessageLength = 4000;
+
     private const string SelectRunSql = """
-        SELECT id, status, attempt
+        SELECT id, status, attempt, started_at_utc AS StartedAtUtc, start_token AS StartToken
         FROM bots.job_runs WITH (UPDLOCK, HOLDLOCK)
         WHERE job_name = @JobName AND scheduled_for_utc = @ScheduledForUtc;
         """;
 
     private const string InsertRunSql = """
-        INSERT INTO bots.job_runs (job_name, scheduled_for_utc, attempt, started_at_utc, status, repos_ok, repos_failed)
+        INSERT INTO bots.job_runs (job_name, scheduled_for_utc, attempt, started_at_utc, status, repos_ok, repos_failed, start_token)
         OUTPUT inserted.id
-        VALUES (@JobName, @ScheduledForUtc, 1, @NowUtc, N'Running', 0, 0);
+        VALUES (@JobName, @ScheduledForUtc, 1, @NowUtc, N'Running', 0, 0, @StartToken);
         """;
 
     private const string MarkOrphanAbandonedSql = """
@@ -49,7 +52,7 @@ public sealed class SqlJobRunStore(
 
         UPDATE bots.job_runs
         SET status = N'Running', attempt = attempt + 1, started_at_utc = @NowUtc, finished_at_utc = NULL,
-            repos_ok = 0, repos_failed = 0, error_summary = NULL
+            repos_ok = 0, repos_failed = 0, error_summary = NULL, start_token = @StartToken
         WHERE id = @Id;
         """;
 
@@ -76,17 +79,27 @@ public sealed class SqlJobRunStore(
         WHERE job_name = @JobName AND status = N'Running' AND started_at_utc < @ThresholdUtc;
         """;
 
+    // La clave de idempotencia hace que repetir la inserción (reintento de Polly tras un commit cuya
+    // respuesta se perdió) no duplique la fila. El índice único la respalda.
     private const string InsertErrorSql = """
-        INSERT INTO bots.job_run_errors (job_run_id, attempt, repo_key, error_type, message, occurred_at_utc)
-        VALUES (@JobRunId, @Attempt, @RepoKey, @ErrorType, @Message, @NowUtc);
+        IF NOT EXISTS (SELECT 1 FROM bots.job_run_errors WHERE idempotency_key = @IdempotencyKey)
+            INSERT INTO bots.job_run_errors (job_run_id, attempt, repo_key, error_type, message, occurred_at_utc, idempotency_key)
+            VALUES (@JobRunId, @Attempt, @RepoKey, @ErrorType, @Message, @NowUtc, @IdempotencyKey);
         """;
 
-    public async Task<IJobRunLease?> TryStartAsync(string jobName, DateTimeOffset scheduledForUtc, CancellationToken ct)
+    public Task<IJobRunLease?> TryStartAsync(string jobName, DateTimeOffset scheduledForUtc, CancellationToken ct) =>
+        TryStartAsync(jobName, scheduledForUtc, Guid.NewGuid(), ct);
+
+    /// <param name="startToken">
+    /// Clave de idempotencia de esta llamada: se fija una vez y se repite en cada reintento de Polly, de modo
+    /// que un reintento tras perder la respuesta del COMMIT adopta su propia fila en vez de gastar un intento.
+    /// </param>
+    internal async Task<IJobRunLease?> TryStartAsync(string jobName, DateTimeOffset scheduledForUtc, Guid startToken, CancellationToken ct)
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(jobName);
 
         return await resilience.Pipeline.ExecuteAsync(
-            async token => await TryStartOnceAsync(jobName, scheduledForUtc, token), ct);
+            async token => await TryStartOnceAsync(jobName, scheduledForUtc, startToken, token), ct);
     }
 
     public async Task CompleteAsync(JobRun run, JobRunStatus status, int reposOk, int reposFailed, string? errorSummary, CancellationToken ct)
@@ -156,8 +169,7 @@ public sealed class SqlJobRunStore(
                 lockHeld = await SqlAppLock.TryAcquireAsync(lockConnection, resource, token);
                 if (!lockHeld)
                 {
-                    logger.LogInformation(
-                        "{JobName}: otra instancia tiene el lock; no se marcan corridas Running como Abandoned.", jobName);
+                    LogLockHeldNotMarkingStale(logger, jobName);
                     return 0;
                 }
 
@@ -178,15 +190,17 @@ public sealed class SqlJobRunStore(
 
         if (marked > 0)
         {
-            logger.LogWarning(
-                "{JobName}: {Count} corridas Running huérfanas (iniciadas hace más de {OlderThan}) marcadas como Abandoned.",
-                jobName, marked, olderThan);
+            LogStaleRunsMarked(logger, jobName, marked, olderThan);
         }
 
         return marked;
     }
 
-    public async Task AddErrorAsync(JobRun run, string? repoKey, string errorType, string message, CancellationToken ct)
+    public Task AddErrorAsync(JobRun run, string? repoKey, string errorType, string message, CancellationToken ct) =>
+        AddErrorAsync(run, repoKey, errorType, message, Guid.NewGuid(), ct);
+
+    /// <param name="idempotencyKey">Se fija una vez y se repite en cada reintento de Polly: el error se registra una sola vez.</param>
+    internal async Task AddErrorAsync(JobRun run, string? repoKey, string errorType, string message, Guid idempotencyKey, CancellationToken ct)
     {
         ArgumentNullException.ThrowIfNull(run);
         ArgumentException.ThrowIfNullOrWhiteSpace(errorType);
@@ -198,7 +212,8 @@ public sealed class SqlJobRunStore(
             run.Attempt,
             RepoKey = Truncate(repoKey, MaxRepoKeyLength),
             ErrorType = Truncate(errorType, MaxErrorTypeLength),
-            Message = message,
+            Message = Truncate(message, MaxErrorMessageLength),
+            IdempotencyKey = idempotencyKey,
         }).AddUtc("NowUtc", timeProvider.GetUtcNow());
 
         await resilience.Pipeline.ExecuteAsync(async token =>
@@ -209,7 +224,7 @@ public sealed class SqlJobRunStore(
         }, ct);
     }
 
-    private async Task<IJobRunLease?> TryStartOnceAsync(string jobName, DateTimeOffset scheduledForUtc, CancellationToken ct)
+    private async Task<IJobRunLease?> TryStartOnceAsync(string jobName, DateTimeOffset scheduledForUtc, Guid startToken, CancellationToken ct)
     {
         var resource = SqlAppLock.ResourceFor(jobName);
         var lockConnection = connections.CreateDedicated();
@@ -221,12 +236,11 @@ public sealed class SqlJobRunStore(
             lockHeld = await SqlAppLock.TryAcquireAsync(lockConnection, resource, ct);
             if (!lockHeld)
             {
-                logger.LogInformation(
-                    "{JobName}: otra instancia tiene el lock del job; no se inicia {ScheduledForUtc:o}.", jobName, scheduledForUtc);
+                LogLockHeldNotStarting(logger, jobName, scheduledForUtc);
                 return null;
             }
 
-            run = await OpenOrResumeRunAsync(jobName, scheduledForUtc, ct);
+            run = await OpenOrResumeRunAsync(jobName, scheduledForUtc, startToken, ct);
             return run is null ? null : new SqlJobRunLease(run, lockConnection, resource, logger);
         }
         finally
@@ -240,7 +254,7 @@ public sealed class SqlJobRunStore(
     }
 
     /// <summary>Reglas de TryStartAsync, en una transacción y con el lock ya tomado.</summary>
-    private async Task<JobRun?> OpenOrResumeRunAsync(string jobName, DateTimeOffset scheduledForUtc, CancellationToken ct)
+    private async Task<JobRun?> OpenOrResumeRunAsync(string jobName, DateTimeOffset scheduledForUtc, Guid startToken, CancellationToken ct)
     {
         await using var connection = connections.Create();
         await connection.OpenAsync(ct);
@@ -254,7 +268,7 @@ public sealed class SqlJobRunStore(
         // 2. No existe: primer intento.
         if (row is null)
         {
-            var insert = new DynamicParameters(new { JobName = jobName })
+            var insert = new DynamicParameters(new { JobName = jobName, StartToken = startToken })
                 .AddUtc("ScheduledForUtc", scheduledForUtc)
                 .AddUtc("NowUtc", now);
             var id = await connection.ExecuteScalarAsync<long>(
@@ -265,46 +279,72 @@ public sealed class SqlJobRunStore(
 
         var status = Enum.Parse<JobRunStatus>(row.Status);
 
+        // Running con la clave de esta llamada: un intento anterior de Polly ya la abrió (o retomó) y se
+        // perdió la respuesta del COMMIT. Se continúa con ella; no es huérfana y no se gasta otro intento.
+        if (status == JobRunStatus.Running && row.StartToken == startToken)
+        {
+            await transaction.CommitAsync(ct);
+            LogAdoptedOwnRun(logger, jobName, row.Id, row.Attempt, scheduledForUtc);
+            return new JobRun(row.Id, jobName, scheduledForUtc, row.Attempt, SqlParameters.FromUtc(row.StartedAtUtc));
+        }
+
         // 5. Ya completada.
         if (status.CountsAsCompleted())
         {
             await transaction.CommitAsync(ct);
-            logger.LogInformation(
-                "{JobName}: la ocurrencia {ScheduledForUtc:o} ya está {Status}; no se repite.", jobName, scheduledForUtc, status);
+            LogAlreadyCompleted(logger, jobName, scheduledForUtc, status);
             return null;
         }
 
-        var byId = new DynamicParameters(new { row.Id }).AddUtc("NowUtc", now);
+        var byId = new DynamicParameters(new { row.Id, StartToken = startToken }).AddUtc("NowUtc", now);
 
         // 4. Running con el lock libre: el dueño anterior murió.
         if (status == JobRunStatus.Running)
         {
             await connection.ExecuteAsync(new CommandDefinition(MarkOrphanAbandonedSql, byId, transaction, cancellationToken: ct));
-            logger.LogWarning(
-                "{JobName}: la corrida {JobRunId} (intento {Attempt}) de {ScheduledForUtc:o} seguía Running sin lock; se marca Abandoned.",
-                jobName, row.Id, row.Attempt, scheduledForUtc);
+            LogOrphanMarkedAbandoned(logger, jobName, row.Id, row.Attempt, scheduledForUtc);
         }
 
         // 3. Failed / Abandoned: se retoma si quedan intentos.
         if (row.Attempt >= options.MaxAttempts)
         {
             await transaction.CommitAsync(ct);
-            logger.LogError(
-                "{JobName}: la ocurrencia {ScheduledForUtc:o} (corrida {JobRunId}) agotó sus {MaxAttempts} intentos; no se retoma. Ver runbook: intentos agotados.",
-                jobName, scheduledForUtc, row.Id, options.MaxAttempts);
+            LogAttemptsExhausted(logger, jobName, scheduledForUtc, row.Id, options.MaxAttempts);
             return null;
         }
 
         await connection.ExecuteAsync(new CommandDefinition(ResumeRunSql, byId, transaction, cancellationToken: ct));
         await transaction.CommitAsync(ct);
-        logger.LogInformation(
-            "{JobName}: se retoma la ocurrencia {ScheduledForUtc:o} (corrida {JobRunId}) con el intento {Attempt}.",
-            jobName, scheduledForUtc, row.Id, row.Attempt + 1);
+        LogResumed(logger, jobName, scheduledForUtc, row.Id, row.Attempt + 1);
         return new JobRun(row.Id, jobName, scheduledForUtc, row.Attempt + 1, now);
     }
 
     private static string? Truncate(string? value, int maxLength) =>
         value is null || value.Length <= maxLength ? value : value[..maxLength];
 
-    private sealed record JobRunRow(long Id, string Status, int Attempt);
+    private sealed record JobRunRow(long Id, string Status, int Attempt, DateTime StartedAtUtc, Guid? StartToken);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: otra instancia tiene el lock; no se marcan corridas Running como Abandoned.")]
+    private static partial void LogLockHeldNotMarkingStale(ILogger logger, string jobName);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{JobName}: {Count} corridas Running huérfanas (iniciadas hace más de {OlderThan}) marcadas como Abandoned.")]
+    private static partial void LogStaleRunsMarked(ILogger logger, string jobName, int count, TimeSpan olderThan);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: otra instancia tiene el lock del job; no se inicia {ScheduledForUtc:o}.")]
+    private static partial void LogLockHeldNotStarting(ILogger logger, string jobName, DateTimeOffset scheduledForUtc);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: la corrida {JobRunId} (intento {Attempt}) de {ScheduledForUtc:o} ya la había abierto esta llamada antes de un reintento; se continúa con ella.")]
+    private static partial void LogAdoptedOwnRun(ILogger logger, string jobName, long jobRunId, int attempt, DateTimeOffset scheduledForUtc);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: la ocurrencia {ScheduledForUtc:o} ya está {Status}; no se repite.")]
+    private static partial void LogAlreadyCompleted(ILogger logger, string jobName, DateTimeOffset scheduledForUtc, JobRunStatus status);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{JobName}: la corrida {JobRunId} (intento {Attempt}) de {ScheduledForUtc:o} seguía Running sin lock; se marca Abandoned.")]
+    private static partial void LogOrphanMarkedAbandoned(ILogger logger, string jobName, long jobRunId, int attempt, DateTimeOffset scheduledForUtc);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "{JobName}: la ocurrencia {ScheduledForUtc:o} (corrida {JobRunId}) agotó sus {MaxAttempts} intentos; no se retoma. Ver runbook: intentos agotados.")]
+    private static partial void LogAttemptsExhausted(ILogger logger, string jobName, DateTimeOffset scheduledForUtc, long jobRunId, int maxAttempts);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{JobName}: se retoma la ocurrencia {ScheduledForUtc:o} (corrida {JobRunId}) con el intento {Attempt}.")]
+    private static partial void LogResumed(ILogger logger, string jobName, DateTimeOffset scheduledForUtc, long jobRunId, int attempt);
 }

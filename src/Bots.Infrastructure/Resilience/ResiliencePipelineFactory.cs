@@ -9,7 +9,7 @@ namespace Bots.Infrastructure.Resilience;
 /// Construye un pipeline de Polly: reintento con backoff exponencial + jitter y, dentro, circuit
 /// breaker. Ambos actúan solo sobre los errores que <paramref name="isTransient"/> considera transitorios.
 /// </summary>
-internal static class ResiliencePipelineFactory
+internal static partial class ResiliencePipelineFactory
 {
     public static ResiliencePipeline Create(
         string name,
@@ -37,10 +37,8 @@ internal static class ResiliencePipelineFactory
                 UseJitter = true,
                 OnRetry = args =>
                 {
-                    logger.LogWarning(args.Outcome.Exception,
-                        "{Pipeline}: error transitorio ({ErrorType}); reintento {RetryAttempt} de {MaxRetryAttempts} en {RetryDelayMs} ms.",
-                        name, args.Outcome.Exception?.GetType().Name, args.AttemptNumber + 1, options.MaxRetryAttempts,
-                        (int)args.RetryDelay.TotalMilliseconds);
+                    LogRetry(logger, args.Outcome.Exception, name, args.Outcome.Exception?.GetType().Name, args.AttemptNumber + 1,
+                        options.MaxRetryAttempts, (int)args.RetryDelay.TotalMilliseconds);
                     return default;
                 },
             });
@@ -56,17 +54,25 @@ internal static class ResiliencePipelineFactory
                 BreakDuration = options.BreakDuration,
                 OnOpened = args =>
                 {
-                    logger.LogError(args.Outcome.Exception,
-                        "{Pipeline}: circuit breaker ABIERTO durante {BreakDurationSeconds} s; las operaciones fallarán sin intentarse. Ver runbook: circuit breaker.",
-                        name, (int)args.BreakDuration.TotalSeconds);
+                    LogCircuitOpened(logger, args.Outcome.Exception, name, (int)args.BreakDuration.TotalSeconds);
                     return default;
                 },
                 OnClosed = _ =>
                 {
-                    logger.LogInformation("{Pipeline}: circuit breaker cerrado; el servicio responde de nuevo.", name);
+                    LogCircuitClosed(logger, name);
                     return default;
                 },
             })
             .Build();
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "{Pipeline}: error transitorio ({ErrorType}); reintento {RetryAttempt} de {MaxRetryAttempts} en {RetryDelayMs} ms.")]
+    private static partial void LogRetry(
+        ILogger logger, Exception? exception, string pipeline, string? errorType, int retryAttempt, int maxRetryAttempts, int retryDelayMs);
+
+    [LoggerMessage(Level = LogLevel.Error, Message = "{Pipeline}: circuit breaker ABIERTO durante {BreakDurationSeconds} s; las operaciones fallarán sin intentarse. Ver runbook: circuit breaker.")]
+    private static partial void LogCircuitOpened(ILogger logger, Exception? exception, string pipeline, int breakDurationSeconds);
+
+    [LoggerMessage(Level = LogLevel.Information, Message = "{Pipeline}: circuit breaker cerrado; el servicio responde de nuevo.")]
+    private static partial void LogCircuitClosed(ILogger logger, string pipeline);
 }
