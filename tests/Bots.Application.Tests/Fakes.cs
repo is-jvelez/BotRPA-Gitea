@@ -81,6 +81,11 @@ internal sealed class FakeJobRunStore : IJobRunStore
 
     public List<FakeLease> Leases { get; } = [];
 
+    /// <summary>Si se fija, TryStartAsync lanza esta excepción una vez (p. ej. BD caída).</summary>
+    public Exception? TryStartExceptionOnce { get; set; }
+
+    public List<TimeSpan> MarkStaleCalls { get; } = [];
+
     public void Seed(string jobName, DateTimeOffset scheduledForUtc, JobRunStatus status) =>
         Rows[(jobName, scheduledForUtc)] = new Row { Id = _nextId++, Status = status, Attempt = 1 };
 
@@ -88,6 +93,12 @@ internal sealed class FakeJobRunStore : IJobRunStore
 
     public Task<IJobRunLease?> TryStartAsync(string jobName, DateTimeOffset scheduledForUtc, CancellationToken ct)
     {
+        if (TryStartExceptionOnce is { } exception)
+        {
+            TryStartExceptionOnce = null;
+            throw exception;
+        }
+
         if (!LockAvailable)
         {
             return Task.FromResult<IJobRunLease?>(null);
@@ -130,8 +141,11 @@ internal sealed class FakeJobRunStore : IJobRunStore
             .Select(r => (DateTimeOffset?)r.Key.ScheduledForUtc)
             .Max());
 
-    public Task<int> MarkStaleRunsAbandonedAsync(string jobName, TimeSpan olderThan, CancellationToken ct) =>
-        Task.FromResult(0);
+    public Task<int> MarkStaleRunsAbandonedAsync(string jobName, TimeSpan olderThan, CancellationToken ct)
+    {
+        MarkStaleCalls.Add(olderThan);
+        return Task.FromResult(0);
+    }
 
     public Task AddErrorAsync(JobRun run, string? repoKey, string errorType, string message, CancellationToken ct)
     {
@@ -189,15 +203,32 @@ internal sealed class FakeSchedule(TimeSpan interval) : ISchedule
     }
 }
 
+/// <summary>Logger en memoria, seguro entre hilos (el programador escribe desde otra tarea).</summary>
 internal sealed class ListLogger<T> : ILogger<T>
 {
-    public List<(LogLevel Level, string Message)> Entries { get; } = [];
+    private readonly List<(LogLevel Level, string Message)> _entries = [];
+
+    public IReadOnlyList<(LogLevel Level, string Message)> Entries
+    {
+        get
+        {
+            lock (_entries)
+            {
+                return _entries.ToList();
+            }
+        }
+    }
 
     public IDisposable? BeginScope<TState>(TState state)
         where TState : notnull => null;
 
     public bool IsEnabled(LogLevel logLevel) => true;
 
-    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter) =>
-        Entries.Add((logLevel, formatter(state, exception)));
+    public void Log<TState>(LogLevel logLevel, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+    {
+        lock (_entries)
+        {
+            _entries.Add((logLevel, formatter(state, exception)));
+        }
+    }
 }

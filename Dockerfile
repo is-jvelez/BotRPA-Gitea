@@ -33,7 +33,9 @@ COPY src/Bots.Worker/Bots.Worker.csproj src/Bots.Worker/
 RUN dotnet restore src/Bots.Worker/Bots.Worker.csproj
 
 COPY src/ src/
-RUN dotnet publish src/Bots.Worker/Bots.Worker.csproj -c Release --no-restore -o /app/publish
+RUN dotnet publish src/Bots.Worker/Bots.Worker.csproj -c Release --no-restore -o /app/publish \
+    # NuGet no conserva el bit de ejecución: sin esto el driver de Playwright falla con "Permission denied".
+    && chmod +x /app/publish/.playwright/node/linux-x64/node
 
 # ---------------------------------------------------------------------------
 # Target `runtime` (por defecto). La imagen de Playwright ya trae el runtime de .NET 10

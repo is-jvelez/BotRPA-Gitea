@@ -32,7 +32,7 @@ public sealed class SqlJobRunStore(
     private const string MarkOrphanAbandonedSql = """
         UPDATE bots.job_runs
         SET status = N'Abandoned', finished_at_utc = @NowUtc,
-            error_summary = N'Abandoned: la corrida seguía Running sin lock (el proceso anterior terminó sin cerrarla).'
+            error_summary = N'La corrida seguía Running sin lock: el proceso anterior terminó sin cerrarla.'
         WHERE id = @Id;
         """;
 
@@ -72,7 +72,7 @@ public sealed class SqlJobRunStore(
     private const string MarkStaleSql = """
         UPDATE bots.job_runs
         SET status = N'Abandoned', finished_at_utc = @NowUtc,
-            error_summary = N'Abandoned al arrancar: seguía Running sin ninguna instancia ejecutándola.'
+            error_summary = N'Marcada al arrancar: seguía Running sin ninguna instancia ejecutándola.'
         WHERE job_name = @JobName AND status = N'Running' AND started_at_utc < @ThresholdUtc;
         """;
 

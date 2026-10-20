@@ -102,5 +102,37 @@ services:
     volumes:
       - ./flyway/sql:/flyway/sql:ro
 
+  bot:
+    build:
+      context: .
+      target: runtime
+    depends_on:
+      flyway:
+        condition: service_completed_successfully
+    restart: unless-stopped
+    # Mayor que HostOptions.ShutdownTimeout (45 s): la corrida en curso se cierra como Abandoned.
+    stop_grace_period: 60s
+    # Chromium usa /dev/shm; los 64 MB por defecto de Docker se quedan cortos.
+    shm_size: "512m"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    environment:
+      DOTNET_ENVIRONMENT: Production
+      # SQL: usuario de la app (sin DDL). TrustServerCertificate solo para el SQL Server local de la PoC.
+      Sql__Server: "sql,1433"
+      Sql__Database: BotsDb
+      Sql__User: ${APP_DB_USER:?Falta APP_DB_USER en .env}
+      Sql__Password: ${APP_DB_PASSWORD:?Falta APP_DB_PASSWORD en .env}
+      Sql__TrustServerCertificate: "true"
+      # Gitea: desde el contenedor, http://host.docker.internal:3000.
+      Gitea__BaseUrl: ${GITEA_BASE_URL:?Falta GITEA_BASE_URL en .env}
+      Gitea__User: ${GITEA_USER:?Falta GITEA_USER en .env}
+      Gitea__Password: ${GITEA_PASSWORD:?Falta GITEA_PASSWORD en .env}
+      # Calendario y recuperación.
+      Bots__Schedule__Cron: ${BOTS_SCHEDULE_CRON:?Falta BOTS_SCHEDULE_CRON en .env}
+      Bots__Schedule__TimeZone: ${BOTS_SCHEDULE_TIMEZONE:-America/Guayaquil}
+      Bots__AllowEmptySource: ${BOTS_ALLOW_EMPTY_SOURCE:-false}
+      Bots__Recovery__MaxAttempts: ${BOTS_RECOVERY_MAX_ATTEMPTS:-3}
+
 volumes:
   mssql-data:

@@ -2,6 +2,8 @@
 
   <PropertyGroup>
     <OutputType>Exe</OutputType>
+    <!-- Para correr fuera de Docker: `dotnet user-secrets set "Sql:Password" ...` (no se versiona). -->
+    <UserSecretsId>bots-sync-repos-worker</UserSecretsId>
   </PropertyGroup>
 
   <ItemGroup>
