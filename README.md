@@ -23,7 +23,8 @@ cp .env.example .env
 ```
 
 Completa `.env`: reemplaza cada `CAMBIAR_ESTO` (contraseñas de SQL, credenciales de Gitea y el cron, por
-ejemplo `"*/5 * * * *"`). Fija también `MSSQL_TAG` en un tag concreto (probado: `2022-CU27-ubuntu-22.04`).
+ejemplo `"0 * * * *"`, cada hora; `"*/5 * * * *"` solo para pruebas).
+Fija también `MSSQL_TAG` en un tag concreto (probado: `2022-CU27-ubuntu-22.04`).
 
 ```bash
 docker compose up --build
