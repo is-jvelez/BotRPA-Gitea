@@ -1,0 +1,9 @@
+# Normaliza saltos de línea en el repositorio (LF en el índice; checkout según plataforma).
+* text=auto
+
+# Archivos que se ejecutan o se leen dentro de contenedores Linux: siempre LF.
+*.sh        text eol=lf
+Dockerfile  text eol=lf
+*.yml       text eol=lf
+*.yaml      text eol=lf
+*.sql       text eol=lf
