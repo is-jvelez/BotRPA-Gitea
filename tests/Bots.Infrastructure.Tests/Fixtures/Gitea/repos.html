@@ -1,0 +1,18 @@
+<!DOCTYPE html>
+<!-- Fixture modelado sobre Gitea 28.2: /{user}?tab=repositories -->
+<html lang="en"><head><meta charset="utf-8"><title>ana</title></head>
+<body>
+<div class="ui secondary stackable pointing menu">
+	<a class="active  item" href="/ana?tab=repositories">
+		<svg class="svg octicon-repo"></svg> Repositories
+		<div class="ui small label">{{TOTAL}}</div>
+	</a>
+	<a class="item" href="/ana?tab=stars"><svg class="svg octicon-star"></svg> Stars <div class="ui small label">0</div></a>
+</div>
+<!-- Filtros con .item que NO son repos: el selector no debe tomarlos. -->
+<div class="menu flex-items-menu"><label class="item"><input hidden type="radio" name="sort" value="alphabetically"> Alphabetically</label></div>
+<div class="divider"></div>
+<div class="flex-divided-list items-with-main">
+{{ITEMS}}
+</div>
+</body></html>

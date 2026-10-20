@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<!-- Fixture modelado sobre Gitea 28.2: /{owner}/{repo}/branches -->
+<html lang="en"><head><meta charset="utf-8"><title>Branches</title></head>
+<body>
+<div role="main" aria-label="Branches" class="page-content ui repository branches">
+	<div class="ui attached table segment" data-testid="branches-default-branch-list">
+		<table class="ui very basic table"><tbody><tr><td class="six wide">
+			<div class="flex-text-block">
+				<a class="gt-ellipsis branch-name" href="/{{KEY}}/src/branch/{{DEFAULT}}">{{DEFAULT}}</a>
+			</div>
+		</td></tr></tbody></table>
+	</div>
+	<div class="ui attached table segment">
+		<table class="ui very basic table"><tbody>
+{{ROWS}}
+		</tbody></table>
+	</div>
+</div>
+</body></html>

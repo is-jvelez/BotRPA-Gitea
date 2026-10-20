@@ -12,4 +12,8 @@
     <PackageReference Include="Cronos" />
   </ItemGroup>
 
+  <ItemGroup>
+    <InternalsVisibleTo Include="Bots.Infrastructure.Tests" />
+  </ItemGroup>
+
 </Project>

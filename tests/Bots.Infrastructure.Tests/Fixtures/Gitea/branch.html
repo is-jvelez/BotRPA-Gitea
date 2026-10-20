@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<!-- Fixture modelado sobre Gitea 28.2: /{owner}/{repo}/src/branch/{rama} -->
+<html lang="en"><head><meta charset="utf-8"><title>{{KEY}}</title></head>
+<body>
+<div class="repository file list">
+  <div class="ui segments repository-summary">
+    <div class="ui segment sub-menu repository-menu">
+      <a class="item muted " href="/{{KEY}}/commits/branch/{{BRANCH_HREF}}">
+        <svg viewBox="0 0 16 16" class="svg octicon-history" aria-hidden="true" width="16" height="16"></svg> <b>{{COUNT}}</b> Commits
+      </a>
+      <a class="item muted " href="/{{KEY}}/branches">
+        <svg viewBox="0 0 16 16" class="svg octicon-git-branch" aria-hidden="true" width="16" height="16"></svg> <b>{{BRANCHES}}</b> Branches
+      </a>
+    </div>
+  </div>
+</div>
+</body></html>

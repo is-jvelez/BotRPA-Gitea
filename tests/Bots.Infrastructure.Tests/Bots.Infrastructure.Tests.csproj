@@ -21,8 +21,14 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Servidor Gitea falso (Kestrel) para los tests de Playwright: viene con el SDK, sin paquetes NuGet. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Las mismas migraciones que aplica Flyway: los tests corren contra el esquema real. -->
     <None Include="..\..\flyway\sql\*.sql" LinkBase="flyway" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="Fixtures\**\*.html" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
 </Project>

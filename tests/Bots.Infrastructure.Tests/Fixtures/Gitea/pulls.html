@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<!-- Fixture modelado sobre Gitea 28.2 con sesión iniciada: /{owner}/{repo}/pulls -->
+<html lang="en"><head><meta charset="utf-8"><title>Pull Requests</title></head>
+<body>
+<!-- Con sesión iniciada los filtros llevan state=open en su href y pueden aparecer antes que las
+     pestañas (fallo real detectado contra Gitea 28.2): el bot no debe leerlos. -->
+<div class="ui dropdown"><div class="menu">
+  <a class="item label-filter-query-default" href="?type=all&amp;state=open">All labels</a>
+  <a class="item" href="?type=all&amp;state=closed&amp;milestone=-1">No milestones</a>
+</div></div>
+<div class="list-header">
+  <div class="small-menu-items ui compact tiny menu">
+    <!-- La pestaña activa enlaza a state=all (al pulsarla de nuevo se ven todos). -->
+    <a class="active item flex-text-inline" href="?type=all&amp;state=all">
+      <svg class="svg octicon-git-pull-request"></svg>
+      {{OPEN}} Open
+    </a>
+    <a class="item flex-text-inline" href="?type=all&amp;state=closed">
+      <svg class="svg octicon-check"></svg>
+      {{CLOSED}} Closed
+    </a>
+  </div>
+</div>
+<!-- Gitea pinta el mismo menú una segunda vez en la página. -->
+<div class="issue-list-toolbar-left">
+  <div class="small-menu-items ui compact tiny menu">
+    <a class="active item flex-text-inline" href="?type=all&amp;state=all">{{OPEN}} Open</a>
+    <a class="item flex-text-inline" href="?type=all&amp;state=closed">{{CLOSED}} Closed</a>
+  </div>
+</div>
+</body></html>
