@@ -23,7 +23,8 @@ cp .env.example .env
 ```
 
 Completa `.env`: reemplaza cada `CAMBIAR_ESTO` (contraseñas de SQL, credenciales de Gitea y el cron, por
-ejemplo `"*/5 * * * *"`). Fija también `MSSQL_TAG` en un tag concreto (probado: `2022-CU27-ubuntu-22.04`).
+ejemplo `"0 * * * *"`, cada hora; `"*/5 * * * *"` solo para pruebas).
+Fija también `MSSQL_TAG` en un tag concreto (probado: `2022-CU27-ubuntu-22.04`).
 
 ```bash
 docker compose up --build
@@ -95,7 +96,7 @@ src/
 tests/
   Bots.Application.Tests/
   Bots.Infrastructure.Tests/   (incluye Fixtures/Gitea con el HTML de prueba)
-flyway/sql/             Migraciones V1 (esquema y datos) y V2 (control de corridas)
+flyway/sql/             Migraciones V1 (esquema y datos), V2 (control de corridas) y V3 (claves de idempotencia)
 docs/                   blueprint.md (diseño) y runbook.md (operación)
 Dockerfile              Targets sqlserver, build y runtime (imagen del bot)
 docker-compose.yml      sql, sql-init, flyway y bot

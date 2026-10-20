@@ -57,6 +57,17 @@ public sealed class CronosScheduleTests
     }
 
     [Fact]
+    public void Occurrences_are_generated_lazily()
+    {
+        var schedule = new CronosSchedule("* * * * *", Guayaquil);
+
+        // Un siglo de ocurrencias por minuto (~52 millones): solo se generan las que se consumen.
+        var occurrences = schedule.GetOccurrences(Utc(20, 10), Utc(20, 10).AddYears(100));
+
+        Assert.Equal([Utc(20, 10, 1), Utc(20, 10, 2), Utc(20, 10, 3)], occurrences.Take(3));
+    }
+
+    [Fact]
     public void Invalid_cron_expression_fails_fast() =>
         Assert.Throws<CronFormatException>(() => new CronosSchedule("cada 5 minutos", Guayaquil));
 

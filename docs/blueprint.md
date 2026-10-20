@@ -76,6 +76,7 @@ capa delgada.
 | Corrida duplicada | `UNIQUE (job_name, scheduled_for_utc)` en `bots.job_runs`: una fila por ocurrencia. Reintentos reutilizan la fila (`attempt + 1`). |
 | Dos instancias a la vez | `sp_getapplock` exclusivo de sesión (timeout 0) por job, en una conexión dedicada sin pool que mantiene el lease; la otra instancia recibe `null` y lo registra. |
 | Cierre de una corrida ajena | `CompleteAsync` solo actualiza si coinciden `id`, `attempt` y estado `Running` (o el mismo estado final, para que un reintento sea seguro). |
+| Reintento tras perder la respuesta de un COMMIT | `TryStartAsync` y `AddErrorAsync` generan una clave por llamada lógica (`job_runs.start_token`, `job_run_errors.idempotency_key`, V3) que se repite en cada reintento de Polly: el reintento adopta su propia fila en vez de gastar un intento, y el error no se duplica. |
 | Datos duplicados | Upserts idempotentes (MERGE con `HOLDLOCK`); ejecutar dos veces deja el mismo estado. |
 | Ocurrencia perdida por caída | Al arrancar y en cada despertar se calcula la ocurrencia pendiente (`PendingOccurrenceCalculator`): la más reciente después de la última completada. Como el job sincroniza el estado completo, basta con ejecutar esa; las demás se registran (Warning). |
 | Proceso muerto a mitad | La fila queda `Running`; al retomarla con el lock libre se marca `Abandoned` y se reintenta la **misma** ocurrencia con `attempt + 1`. `MarkStaleRunsAbandonedAsync` limpia las huérfanas antiguas (solo si obtiene el lock). |

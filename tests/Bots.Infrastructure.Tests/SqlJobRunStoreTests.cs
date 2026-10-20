@@ -80,6 +80,43 @@ public sealed class SqlJobRunStoreTests(SqlServerFixture db)
     }
 
     [Fact]
+    public async Task Retry_with_the_same_start_token_adopts_its_own_run()
+    {
+        var store = db.JobRunStore();
+        var token = Guid.NewGuid();
+        // Simula un reintento de Polly tras perder la respuesta del COMMIT: la fila quedó escrita y el
+        // lock se soltó al fallar, pero la llamada lógica es la misma (misma clave).
+        await (await store.TryStartAsync(_job, T1, token, Ct))!.DisposeAsync();
+
+        await using var lease = await store.TryStartAsync(_job, T1, token, Ct);
+
+        Assert.NotNull(lease);
+        Assert.Equal(1, lease.Run.Attempt);
+        var row = await SingleRowAsync();
+        Assert.Equal("Running", row.Status);
+        Assert.Equal(1, row.Attempt);
+        Assert.Empty(await ErrorsAsync());
+    }
+
+    [Fact]
+    public async Task Retry_of_a_resume_with_the_same_start_token_does_not_spend_another_attempt()
+    {
+        var store = db.JobRunStore();
+        await using (var first = await store.TryStartAsync(_job, T1, Ct))
+        {
+            await store.CompleteAsync(first!.Run, JobRunStatus.Failed, 0, 1, "falla", Ct);
+        }
+
+        var token = Guid.NewGuid();
+        await (await store.TryStartAsync(_job, T1, token, Ct))!.DisposeAsync();
+        await using var retried = await store.TryStartAsync(_job, T1, token, Ct);
+
+        Assert.Equal(2, retried!.Run.Attempt);
+        Assert.Equal(2, (await SingleRowAsync()).Attempt);
+        Assert.Single(await ErrorsAsync()); // solo la auditoría del intento 1
+    }
+
+    [Fact]
     public async Task MaxAttempts_is_respected()
     {
         var store = db.JobRunStore(maxAttempts: 2);
@@ -169,6 +206,34 @@ public sealed class SqlJobRunStoreTests(SqlServerFixture db)
                 new ErrorRow(2, null, "EmptySource", "intento 2"),
             ],
             await ErrorsAsync());
+    }
+
+    [Fact]
+    public async Task AddError_with_the_same_idempotency_key_is_recorded_once()
+    {
+        var store = db.JobRunStore();
+        await using var lease = await store.TryStartAsync(_job, T1, Ct);
+        var key = Guid.NewGuid();
+
+        // Reintento de Polly tras perder la respuesta del COMMIT: misma clave.
+        await store.AddErrorAsync(lease!.Run, "ana/a", "TimeoutException", "falla", key, Ct);
+        await store.AddErrorAsync(lease.Run, "ana/a", "TimeoutException", "falla", key, Ct);
+        // Otro error lógico (otra clave) sí se registra aunque el texto coincida.
+        await store.AddErrorAsync(lease.Run, "ana/a", "TimeoutException", "falla", Ct);
+
+        Assert.Equal(2, (await ErrorsAsync()).Count);
+    }
+
+    [Fact]
+    public async Task AddError_truncates_long_messages()
+    {
+        var store = db.JobRunStore();
+        await using var lease = await store.TryStartAsync(_job, T1, Ct);
+
+        await store.AddErrorAsync(lease!.Run, null, "Boom", new string('x', 10_000), Ct);
+
+        var error = Assert.Single(await ErrorsAsync());
+        Assert.Equal(Bots.Infrastructure.Sql.SqlJobRunStore.MaxErrorMessageLength, error.Message.Length);
     }
 
     [Fact]

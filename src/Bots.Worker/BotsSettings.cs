@@ -20,7 +20,7 @@ public sealed class BotsSettings
 public sealed class ScheduleSettings
 {
     /// <summary>
-    /// Expresión cron de 5 campos. appsettings.json trae "*/5 * * * *" por defecto; en Docker la fija
+    /// Expresión cron de 5 campos. appsettings.json trae "0 * * * *" (cada hora) por defecto; en Docker la fija
     /// BOTS_SCHEDULE_CRON (obligatoria en el compose).
     /// </summary>
     public string Cron { get; set; } = string.Empty;

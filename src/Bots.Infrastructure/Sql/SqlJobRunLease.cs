@@ -14,7 +14,7 @@ namespace Bots.Infrastructure.Sql;
 /// podría entonces tomarlo. El UNIQUE de job_runs y la guarda de <c>CompleteAsync</c> evitan el
 /// duplicado de filas, pero es un riesgo a revisar al ir a Azure (ver blueprint).
 /// </remarks>
-internal sealed class SqlJobRunLease(JobRun run, SqlConnection lockConnection, string resource, ILogger logger) : IJobRunLease
+internal sealed partial class SqlJobRunLease(JobRun run, SqlConnection lockConnection, string resource, ILogger logger) : IJobRunLease
 {
     private SqlConnection? _lockConnection = lockConnection;
 
@@ -41,11 +41,14 @@ internal sealed class SqlJobRunLease(JobRun run, SqlConnection lockConnection, s
         catch (Exception ex)
         {
             // La conexión no usa pool: al cerrarla se termina la sesión y el lock se libera igualmente.
-            logger.LogWarning(ex, "No se pudo liberar explícitamente el applock {LockResource}; se libera al cerrar la sesión.", resource);
+            LogReleaseFailed(logger, ex, resource);
         }
         finally
         {
             await connection.DisposeAsync();
         }
     }
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "No se pudo liberar explícitamente el applock {LockResource}; se libera al cerrar la sesión.")]
+    private static partial void LogReleaseFailed(ILogger logger, Exception exception, string lockResource);
 }
