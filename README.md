@@ -152,3 +152,8 @@ DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
 Los parámetros de Polly (`Bots:Resilience:Sql` y `Bots:Resilience:Gitea`), los timeouts de Gitea y el
 umbral de corridas huérfanas tienen valores por defecto en `appsettings.json`. La configuración se valida
 al arrancar: si falta algo o el cron no es válido, el bot no arranca y el log dice qué corregir.
+
+
+## Probar CI
+
+Esto es una prueba de como funciona Github Actions con CI
