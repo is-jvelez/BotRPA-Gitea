@@ -41,6 +41,9 @@ internal sealed class BotsSettingsValidator : IValidateOptions<BotsSettings>
             errors.Add("Bots:Recovery:StaleRunThreshold debe ser mayor que 0.");
         }
 
+        errors.AddRange(options.Resilience.Sql.Validate("Bots:Resilience:Sql"));
+        errors.AddRange(options.Resilience.Gitea.Validate("Bots:Resilience:Gitea"));
+
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 }
@@ -64,6 +67,11 @@ internal sealed class GiteaOptionsValidator : IValidateOptions<GiteaOptions>
         if (options.NavigationTimeout <= TimeSpan.Zero || options.ActionTimeout <= TimeSpan.Zero)
         {
             errors.Add("Gitea:NavigationTimeout y Gitea:ActionTimeout deben ser mayores que 0.");
+        }
+
+        if (options.MaxPages < 1)
+        {
+            errors.Add("Gitea:MaxPages debe ser >= 1 (tope de páginas por listado).");
         }
 
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);

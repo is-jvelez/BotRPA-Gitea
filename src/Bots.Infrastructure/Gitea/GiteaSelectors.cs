@@ -27,6 +27,12 @@ internal static class GiteaSelectors
     public const string RepoListItemLink = ".flex-divided-list .item .item-title a.name";
 
     // --- Home del repo: /{owner}/{repo} ---
+    /// <summary>
+    /// "/owner/repo" con cada segmento escapado. Hoy Gitea solo admite [\w.-] en esos nombres, pero así un
+    /// nombre con ?, # o % nunca cambiaría la ruta ni añadiría una query.
+    /// </summary>
+    public static string RepoPath(string repoKey) => "/" + EscapeSegments(repoKey);
+
     public const string EmptyRepoMarker = ".empty-repo-guide";
     public const string Description = ".repo-description";
     public const string RootFileEntry = ".repo-file-cell.name a.entry-name";
@@ -42,19 +48,19 @@ internal static class GiteaSelectors
     // --- Ramas: /{owner}/{repo}/branches?page=N ---
     // Las ramas borradas recientemente aparecen como <span class="branch-name"> (con "Restaurar"):
     // solo los enlaces son ramas vivas. La rama por defecto se repite en cada página.
-    public static string BranchesPath(string repoKey, int page) => $"/{repoKey}/branches?page={page}";
+    public static string BranchesPath(string repoKey, int page) => $"{RepoPath(repoKey)}/branches?page={page}";
 
     public const string BranchNameLink = "a.branch-name";
 
     // --- Una rama: /{owner}/{repo}/src/branch/{rama} ---
     public static string BranchPath(string repoKey, string branch) =>
-        $"/{repoKey}/src/branch/{string.Join('/', branch.Split('/').Select(Uri.EscapeDataString))}";
+        $"{RepoPath(repoKey)}/src/branch/{EscapeSegments(branch)}";
 
     /// <summary>Enlace "<b>N</b> Commits" de la rama mostrada (icono de historial, href .../commits/branch/{rama}).</summary>
     public const string BranchCommitsLink = "a.item[href*='/commits/branch/']:has(svg.octicon-history)";
 
     // --- PRs: /{owner}/{repo}/pulls ---
-    public static string PullsPath(string repoKey) => $"/{repoKey}/pulls";
+    public static string PullsPath(string repoKey) => $"{RepoPath(repoKey)}/pulls";
 
     /// <summary>
     /// Menú con las dos pestañas "N Open" y "N Closed". Gitea puede pintarlo dos veces en la página: se usa
@@ -64,6 +70,9 @@ internal static class GiteaSelectors
     public const string PullStateMenu = ".small-menu-items";
 
     public const string PullStateTab = "a.item";
+
+    /// <summary>Escapa cada segmento y conserva las barras (las ramas pueden tener "/").</summary>
+    private static string EscapeSegments(string path) => string.Join('/', path.Split('/').Select(Uri.EscapeDataString));
 
     private static string CssString(string value) => value.Replace("\\", "\\\\").Replace("'", "\\'");
 }

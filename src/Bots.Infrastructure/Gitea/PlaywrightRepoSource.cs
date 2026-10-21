@@ -97,30 +97,45 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
     }
 
     /// <summary>
-    /// Cada paso se ejecuta aunque falle el anterior (p. ej. el navegador ya murió): así nunca queda vivo
-    /// el proceso del driver de Playwright. La primera excepción se propaga al final.
+    /// Cada paso se ejecuta aunque falle el anterior (p. ej. el navegador ya murió), así que nunca queda vivo
+    /// el proceso del driver de Playwright. Cada fallo se registra en el log con su excepción y no se relanza:
+    /// un error al cerrar no debe ocultar otro ni interrumpir el apagado del host. Idempotente.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
         try
         {
+            await CloseContextAsync();
+        }
+        catch (Exception ex)
+        {
+            LogDisposeStepFailed(_logger, ex, "contexto del navegador");
+        }
+
+        var browser = _browser;
+        _browser = null;
+        if (browser is not null)
+        {
             try
             {
-                await CloseContextAsync();
+                await browser.CloseAsync();
             }
-            finally
+            catch (Exception ex)
             {
-                var browser = _browser;
-                _browser = null;
-                if (browser is not null)
-                {
-                    await browser.CloseAsync();
-                }
+                LogDisposeStepFailed(_logger, ex, "navegador");
             }
+        }
+
+        try
+        {
+            _playwright?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            LogDisposeStepFailed(_logger, ex, "driver de Playwright");
         }
         finally
         {
-            _playwright?.Dispose();
             _playwright = null;
             _gate.Dispose();
         }
@@ -135,7 +150,11 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         _playwright ??= await Playwright.CreateAsync();
         if (_browser is null || !_browser.IsConnected)
         {
-            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = _options.Headless });
+            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = _options.Headless,
+                ChromiumSandbox = _options.ChromiumSandbox,
+            });
         }
 
         // Idioma fijo: el formato de los números ("1,234") y los textos no dependen del host.
@@ -284,7 +303,7 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
 
     private async Task<RepoSnapshot> ReadRepoAsync(IPage page, string key, CancellationToken ct)
     {
-        await GotoAsync(page, $"/{key}", expectSession: true, ct);
+        await GotoAsync(page, GiteaSelectors.RepoPath(key), expectSession: true, ct);
 
         var description = await ReadDescriptionAsync(page);
         var isEmpty = await page.Locator(GiteaSelectors.EmptyRepoMarker).CountAsync() > 0;
@@ -537,6 +556,9 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
 
     [LoggerMessage(Level = LogLevel.Debug, Message = "'{RepoKey}' no tiene la sección de pull requests (404): 0 PRs.")]
     private static partial void LogPullsDisabled(ILogger logger, string repoKey);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Al liberar PlaywrightRepoSource falló el cierre del {Step}; se continúa con el resto.")]
+    private static partial void LogDisposeStepFailed(ILogger logger, Exception exception, string step);
 
     [LoggerMessage(Level = LogLevel.Warning, Message = "No se pudo guardar el HTML de diagnóstico de {Url}.")]
     private static partial void LogDiagnosticsFailed(ILogger logger, Exception exception, string url);

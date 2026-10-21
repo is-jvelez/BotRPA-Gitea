@@ -23,4 +23,53 @@ public sealed class ResilienceOptions
 
     /// <summary>Tiempo que el circuito permanece abierto antes de probar de nuevo.</summary>
     public TimeSpan BreakDuration { get; set; } = TimeSpan.FromSeconds(30);
+
+    /// <summary>
+    /// Errores de rango, con los mismos límites que exige Polly 8 al construir el pipeline, pero con el nombre
+    /// de la clave de configuración (p. ej. <c>Bots:Resilience:Sql:BreakDuration</c>) para que el arranque
+    /// diga qué corregir. Vacía si las opciones son válidas.
+    /// </summary>
+    public IReadOnlyList<string> Validate(string section)
+    {
+        var errors = new List<string>();
+        var minWindow = TimeSpan.FromMilliseconds(500);
+        var oneDay = TimeSpan.FromDays(1);
+
+        if (MaxRetryAttempts < 0)
+        {
+            errors.Add($"{section}:MaxRetryAttempts debe ser >= 0 (0 = sin reintentos).");
+        }
+
+        if (BaseDelay < TimeSpan.Zero || BaseDelay > oneDay)
+        {
+            errors.Add($"{section}:BaseDelay debe estar entre 00:00:00 y 1.00:00:00.");
+        }
+
+        if (MaxDelay < TimeSpan.Zero || MaxDelay > oneDay)
+        {
+            errors.Add($"{section}:MaxDelay debe estar entre 00:00:00 y 1.00:00:00.");
+        }
+
+        if (double.IsNaN(BreakerFailureRatio) || BreakerFailureRatio < 0 || BreakerFailureRatio > 1)
+        {
+            errors.Add($"{section}:BreakerFailureRatio debe estar entre 0 y 1.");
+        }
+
+        if (BreakerSamplingDuration < minWindow || BreakerSamplingDuration > oneDay)
+        {
+            errors.Add($"{section}:BreakerSamplingDuration debe estar entre 00:00:00.500 y 1.00:00:00.");
+        }
+
+        if (BreakerMinimumThroughput < 2)
+        {
+            errors.Add($"{section}:BreakerMinimumThroughput debe ser >= 2.");
+        }
+
+        if (BreakDuration < minWindow || BreakDuration > oneDay)
+        {
+            errors.Add($"{section}:BreakDuration debe estar entre 00:00:00.500 y 1.00:00:00.");
+        }
+
+        return errors;
+    }
 }

@@ -10,7 +10,8 @@ services:
       context: .
       target: sqlserver
       args:
-        MSSQL_TAG: ${MSSQL_TAG:-2022-latest}
+        MSSQL_TAG: ${MSSQL_TAG:-2022-CU27-ubuntu-22.04}
+        MSSQL_DIGEST: ${MSSQL_DIGEST-@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090}
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: ${MSSQL_SA_PASSWORD:?Falta MSSQL_SA_PASSWORD en .env}
@@ -20,22 +21,26 @@ services:
       # Solo accesible desde la máquina local.
       - "127.0.0.1:1433:1433"
     healthcheck:
-      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$${MSSQL_SA_PASSWORD}\" -C -b -Q \"SELECT 1\" -o /dev/null"]
+      # La contraseña va por SQLCMDPASSWORD (entorno), no por -P: no queda en los argumentos del proceso (ps).
+      test: ["CMD-SHELL", "SQLCMDPASSWORD=\"$${MSSQL_SA_PASSWORD}\" /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -C -b -Q \"SELECT 1\" -o /dev/null"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 30s
 
   # Ejecución única e idempotente (se puede relanzar): base, rol y usuarios.
-  # Usa sa solo aquí. Las contraseñas llegan como variables de entorno, que sqlcmd expone
-  # como variables de script $(NOMBRE) (en YAML se escriben $$(NOMBRE) para que compose
-  # no las interpole).
+  # Usa sa solo aquí. Los valores llegan como variables de entorno, que sqlcmd expone como
+  # variables de script $(NOMBRE) y sustituye tal cual en el SQL (en YAML se escriben $$(NOMBRE)
+  # para que compose no las interpole). Por eso, antes de ejecutar:
+  #   - los usuarios se validan como identificadores simples (no pueden cerrar [ ] ni ' ');
+  #   - las contraseñas se pasan con las comillas simples duplicadas (literal N'...' seguro).
   sql-init:
     build:
       context: .
       target: sqlserver
       args:
-        MSSQL_TAG: ${MSSQL_TAG:-2022-latest}
+        MSSQL_TAG: ${MSSQL_TAG:-2022-CU27-ubuntu-22.04}
+        MSSQL_DIGEST: ${MSSQL_DIGEST-@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090}
     depends_on:
       sql:
         condition: service_healthy
@@ -50,6 +55,15 @@ services:
     command:
       - |
         set -euo pipefail
+        for user in "$$APP_DB_USER" "$$FLYWAY_DB_USER"; do
+          if [[ ! "$$user" =~ ^[A-Za-z_][A-Za-z0-9_]{0,127}$$ ]]; then
+            echo "sql-init: usuario '$$user' inválido; usa solo letras, dígitos y _ (APP_DB_USER, FLYWAY_DB_USER)." >&2
+            exit 1
+          fi
+        done
+        q="'"
+        export APP_DB_PASSWORD_SQL="$${APP_DB_PASSWORD//$$q/$$q$$q}"
+        export FLYWAY_DB_PASSWORD_SQL="$${FLYWAY_DB_PASSWORD//$$q/$$q$$q}"
         cat > /tmp/sql-init.sql <<'SQL'
         IF DB_ID(N'BotsDb') IS NULL
             CREATE DATABASE BotsDb;
@@ -62,9 +76,9 @@ services:
         GO
         -- Usuario de la app: solo miembro de bots_app_role (sin DDL).
         IF SUSER_ID(N'$$(APP_DB_USER)') IS NULL
-            CREATE LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
+            CREATE LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD_SQL)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
         ELSE
-            ALTER LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD)';
+            ALTER LOGIN [$$(APP_DB_USER)] WITH PASSWORD = N'$$(APP_DB_PASSWORD_SQL)';
         IF DATABASE_PRINCIPAL_ID(N'$$(APP_DB_USER)') IS NULL
             CREATE USER [$$(APP_DB_USER)] FOR LOGIN [$$(APP_DB_USER)];
         IF IS_ROLEMEMBER(N'bots_app_role', N'$$(APP_DB_USER)') = 0
@@ -72,9 +86,9 @@ services:
         GO
         -- Usuario de Flyway: db_owner de BotsDb, sin permisos de servidor.
         IF SUSER_ID(N'$$(FLYWAY_DB_USER)') IS NULL
-            CREATE LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
+            CREATE LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD_SQL)', DEFAULT_DATABASE = BotsDb, CHECK_POLICY = ON;
         ELSE
-            ALTER LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD)';
+            ALTER LOGIN [$$(FLYWAY_DB_USER)] WITH PASSWORD = N'$$(FLYWAY_DB_PASSWORD_SQL)';
         IF DATABASE_PRINCIPAL_ID(N'$$(FLYWAY_DB_USER)') IS NULL
             CREATE USER [$$(FLYWAY_DB_USER)] FOR LOGIN [$$(FLYWAY_DB_USER)];
         IF IS_ROLEMEMBER(N'db_owner', N'$$(FLYWAY_DB_USER)') = 0
@@ -85,7 +99,8 @@ services:
         echo "sql-init: BotsDb, bots_app_role y usuarios listos."
 
   flyway:
-    image: flyway/flyway:13.10.3
+    # Fijada por digest: el tag podría volver a publicarse con otro contenido.
+    image: flyway/flyway:13.10.3@sha256:ad074befe29dc4151b7f61be741dc13d1c3d4e5e76fc59681c026108b54bdebe
     depends_on:
       sql-init:
         condition: service_completed_successfully
@@ -114,6 +129,11 @@ services:
     stop_grace_period: 60s
     # Chromium usa /dev/shm; los 64 MB por defecto de Docker se quedan cortos.
     shm_size: "512m"
+    # Sandbox de Chromium (Gitea:ChromiumSandbox=true): necesita crear user namespaces, que el perfil
+    # seccomp por defecto de Docker bloquea ("No usable sandbox!"). Este es el perfil oficial de Playwright
+    # (utils/docker/seccomp_profile.json, v1.63.0): el de Docker + permitir clone/setns/unshare.
+    security_opt:
+      - seccomp=./docker/chromium-seccomp.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
     environment:

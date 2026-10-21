@@ -64,6 +64,7 @@ transitoria muchas veces seguidas; las operaciones fallan sin intentarse durante
 | **Login falló** (`GiteaLoginException`) | Mensaje de Gitea en el log; si menciona 2FA, el usuario tiene segundo factor | Verificar `GITEA_USER`/`GITEA_PASSWORD` entrando a mano en Gitea; actualizar `.env` y `docker compose up -d bot`. No se reintenta solo. |
 | **Selector cambió** (`GiteaPageStructureException`: "No se encontró el …", o `GiteaInconsistentDataException`) | Versión de Gitea; fijar `Gitea__DiagnosticsDirectory` (p. ej. un volumen) para guardar el HTML de la página que falló | Actualizar solo `src/Bots.Infrastructure/Gitea/GiteaSelectors.cs` y los fixtures de `tests/Bots.Infrastructure.Tests/Fixtures/Gitea`; correr los tests y la prueba contra el Gitea real (README). |
 | **Redirección a otro origen** (`Gitea redirigió a …`) | `ROOT_URL` de Gitea y `GITEA_BASE_URL` | Alinear `ROOT_URL` de Gitea con la URL que usa el bot, o poner Gitea en la red del compose. |
+| **Chromium no arranca** (`No usable sandbox!` en el log del bot) | ¿El servicio `bot` tiene `security_opt: seccomp=./docker/chromium-seccomp.json`? (`docker inspect bots-bot-1 --format '{{json .HostConfig.SecurityOpt}}'`); en un host Ubuntu 23.10+, `sysctl kernel.apparmor_restrict_unprivileged_userns` | El sandbox de Chromium necesita user namespaces. Mantener el perfil seccomp del compose; si el entorno no los permite de ninguna forma, `Gitea__ChromiumSandbox=false` como último recurso (se pierde ese aislamiento). |
 
 ## 3. Relanzar una corrida de forma segura
 

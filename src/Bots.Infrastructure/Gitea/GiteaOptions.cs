@@ -25,6 +25,13 @@ public sealed class GiteaOptions
     public bool Headless { get; set; } = true;
 
     /// <summary>
+    /// Sandbox de Chromium (Playwright lo desactiva por defecto). Activo: si una página lograra explotar el
+    /// navegador, queda aislada del proceso del bot. Solo se desactiva si el entorno no lo permite (Chromium
+    /// falla al arrancar con "No usable sandbox"); ver runbook.
+    /// </summary>
+    public bool ChromiumSandbox { get; set; } = true;
+
+    /// <summary>
     /// Carpeta donde guardar el HTML de la página cuando un selector no encuentra lo esperado (para
     /// diagnosticar un cambio de Gitea). Vacío = no se guarda. El HTML puede contener datos de la sesión:
     /// usar una carpeta local, nunca versionada.
