@@ -138,6 +138,26 @@ de `appsettings.json`). Los user-secrets solo se cargan en el entorno `Developme
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
 ```
 
+## Ver lo que hace el bot (VisualDebug)
+
+Con `Gitea:VisualDebug=true` el bot dibuja un cursor (punto rojo, azul al pulsar) y mueve el mouse paso a
+paso hasta cada elemento que lee o pulsa. Una sola variable sirve para los dos entornos: el bot detecta si
+hay pantalla.
+
+- **Local** (hay pantalla): abre Chromium en ventana, ignora `Headless` y frena cada acción para seguirla
+  en vivo. Cada lectura abre su propia pestaña, así que verás pestañas abrirse y cerrarse.
+
+  ```bash
+  Gitea__VisualDebug=true DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
+  ```
+
+- **Docker** (sin pantalla): sigue en headless y graba un video `.webm` por página en `./videos/<fecha>/`
+  del host. Se activa con `GITEA_VISUAL_DEBUG=true` en `.env` y `docker compose up -d bot`. Cada video se
+  completa al cerrarse su página. En un host Linux, `./videos` debe ser escribible por el uid 1001.
+
+La contraseña se rellena de golpe (no tecla a tecla), pero los videos muestran los datos de los repos: no
+compartirlos ni versionarlos (`videos/` está en `.gitignore`). Solo para depurar: nunca en producción.
+
 ## Configuración
 
 | Variable de `.env` | Clave .NET | Para qué |
@@ -149,6 +169,7 @@ DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
 | `BOTS_SCHEDULE_TIMEZONE` | `Bots:Schedule:TimeZone` | Zona IANA del cron (`America/Guayaquil`) |
 | `BOTS_ALLOW_EMPTY_SOURCE` | `Bots:AllowEmptySource` | `false`: 0 repos = corrida `Failed` |
 | `BOTS_RECOVERY_MAX_ATTEMPTS` | `Bots:Recovery:MaxAttempts` | Intentos por ocurrencia (default 3) |
+| `GITEA_VISUAL_DEBUG` | `Gitea:VisualDebug` | `true`: ver/grabar lo que hace el bot (default `false`) |
 
 Los parámetros de Polly (`Bots:Resilience:Sql` y `Bots:Resilience:Gitea`), los timeouts de Gitea y el
 umbral de corridas huérfanas tienen valores por defecto en `appsettings.json`. La configuración se valida

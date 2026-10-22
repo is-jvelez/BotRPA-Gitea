@@ -74,6 +74,11 @@ internal sealed class GiteaOptionsValidator : IValidateOptions<GiteaOptions>
             errors.Add("Gitea:MaxPages debe ser >= 1 (tope de páginas por listado).");
         }
 
+        if (options.VisualDebug && string.IsNullOrWhiteSpace(options.VideoDirectory))
+        {
+            errors.Add("Gitea:VideoDirectory es obligatorio con Gitea:VisualDebug=true (carpeta de los videos sin pantalla).");
+        }
+
         return errors.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(errors);
     }
 }
