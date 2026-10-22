@@ -26,6 +26,7 @@ mssql-data/
 # --- Playwright (navegadores y trazas locales) ---
 .playwright/
 playwright-traces/
+videos/
 
 # --- IDE / SO ---
 .vs/

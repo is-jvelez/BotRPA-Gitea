@@ -136,6 +136,10 @@ services:
       - seccomp=./docker/chromium-seccomp.json
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      # Videos de Gitea:VisualDebug (vacía si está apagado). El bot corre como uid 1001: en un host Linux
+      # la carpeta debe ser escribible por ese usuario.
+      - ./videos:/app/videos
     environment:
       DOTNET_ENVIRONMENT: Production
       # SQL: usuario de la app (sin DDL). TrustServerCertificate solo para el SQL Server local de la PoC.
@@ -148,6 +152,9 @@ services:
       Gitea__BaseUrl: ${GITEA_BASE_URL:?Falta GITEA_BASE_URL en .env}
       Gitea__User: ${GITEA_USER:?Falta GITEA_USER en .env}
       Gitea__Password: ${GITEA_PASSWORD:?Falta GITEA_PASSWORD en .env}
+      # Depuración visual: sin pantalla en el contenedor, graba un video por página en ./videos del host.
+      Gitea__VisualDebug: ${GITEA_VISUAL_DEBUG:-false}
+      Gitea__VideoDirectory: /app/videos
       # Calendario y recuperación.
       Bots__Schedule__Cron: ${BOTS_SCHEDULE_CRON:?Falta BOTS_SCHEDULE_CRON en .env}
       Bots__Schedule__TimeZone: ${BOTS_SCHEDULE_TIMEZONE:-America/Guayaquil}

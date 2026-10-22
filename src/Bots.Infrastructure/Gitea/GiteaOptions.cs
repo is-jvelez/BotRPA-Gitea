@@ -37,4 +37,18 @@ public sealed class GiteaOptions
     /// usar una carpeta local, nunca versionada.
     /// </summary>
     public string? DiagnosticsDirectory { get; set; }
+
+    /// <summary>
+    /// Depuración visual: dibuja un cursor en la página y mueve el mouse paso a paso hasta cada elemento que
+    /// el bot lee o pulsa. Con pantalla (ejecución local) abre el navegador en ventana, ignora
+    /// <see cref="Headless"/> y frena cada acción para seguirla a ojo; sin pantalla (Docker) sigue en headless
+    /// y graba un video por página en <see cref="VideoDirectory"/>. Solo para depurar: nunca en producción.
+    /// </summary>
+    public bool VisualDebug { get; set; }
+
+    /// <summary>
+    /// Carpeta de los videos de <see cref="VisualDebug"/> cuando no hay pantalla (una subcarpeta por corrida).
+    /// Los videos muestran los datos de los repos: usar una carpeta local, nunca versionada.
+    /// </summary>
+    public string VideoDirectory { get; set; } = "videos";
 }
