@@ -583,19 +583,31 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
     private const int VisualMouseSteps = 25;
 
     /// <summary>
-    /// Punto rojo que sigue al mouse (azul mientras el botón está pulsado). Chromium no dibuja el cursor en la
-    /// página, así que sin esto no se ve en la ventana ni en el video. pointer-events:none: no tapa los clics.
+    /// Flecha de mouse que sigue al puntero (azul mientras el botón está pulsado). Chromium no dibuja el cursor
+    /// en la página, así que sin esto no se ve en la ventana ni en el video. La punta de la flecha está en la
+    /// esquina superior izquierda del SVG, que coincide con el punto del clic. pointer-events:none: no tapa
+    /// los clics.
     /// </summary>
     private const string CursorScript = """
         addEventListener('DOMContentLoaded', () => {
-          const c = document.createElement('div');
-          c.style.cssText = 'position:fixed;left:-20px;top:-20px;width:14px;height:14px;border-radius:50%;' +
-            'background:rgba(255,0,0,.7);border:2px solid #fff;pointer-events:none;z-index:2147483647;' +
-            'transform:translate(-50%,-50%)';
+          const ns = 'http://www.w3.org/2000/svg';
+          const c = document.createElementNS(ns, 'svg');
+          c.setAttribute('width', '24');
+          c.setAttribute('height', '24');
+          c.setAttribute('viewBox', '0 0 24 24');
+          c.style.cssText = 'position:fixed;left:-30px;top:-30px;pointer-events:none;z-index:2147483647;' +
+            'filter:drop-shadow(1px 2px 2px rgba(0,0,0,.4))';
+          const arrow = document.createElementNS(ns, 'path');
+          arrow.setAttribute('d', 'M1 1 L1 19 L6 14.5 L9.5 22 L12.5 20.7 L9 13.3 L15.5 13.3 Z');
+          arrow.setAttribute('fill', '#000');
+          arrow.setAttribute('stroke', '#fff');
+          arrow.setAttribute('stroke-width', '1.5');
+          arrow.setAttribute('stroke-linejoin', 'round');
+          c.appendChild(arrow);
           document.documentElement.appendChild(c);
           addEventListener('mousemove', e => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
-          addEventListener('mousedown', () => c.style.background = 'rgba(0,0,255,.9)', true);
-          addEventListener('mouseup', () => c.style.background = 'rgba(255,0,0,.7)', true);
+          addEventListener('mousedown', () => arrow.setAttribute('fill', '#1565c0'), true);
+          addEventListener('mouseup', () => arrow.setAttribute('fill', '#000'), true);
         });
         """;
 

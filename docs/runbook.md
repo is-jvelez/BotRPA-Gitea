@@ -1,6 +1,8 @@
 # Runbook: si el bot falla
 
-Corto y operativo. El diseño está en [blueprint.md](blueprint.md).
+Corto y operativo, para el bot en Docker. El diseño está en [blueprint.md](blueprint.md); cómo ejecutarlo
+(local con `dotnet run` o Docker, con o sin VisualDebug) y sus problemas de arranque, en
+[ejecucion.md](ejecucion.md).
 
 ## 1. Qué revisar
 
