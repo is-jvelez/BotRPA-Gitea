@@ -14,7 +14,7 @@ rama, su número de commits**. Guarda todo en **SQL Server** con Dapper, de form
 
 - **Docker Desktop** (o Docker Engine con Compose v2).
 - **Gitea** accesible en `http://localhost:3000` con el usuario cuyos repos se procesan (sin 2FA).
-- Para desarrollar y correr los tests: **.NET 10 SDK**.
+- Para desarrollar, correr los tests o ejecutar el worker fuera de Docker: **.NET 10 SDK**.
 
 ## Arranque en 3 comandos
 
@@ -38,6 +38,9 @@ Para ver qué hace el bot:
 ```bash
 docker compose logs -f bot
 ```
+
+Guía paso a paso en Docker, con y sin simulación (videos de VisualDebug):
+[docs/ejecucion.md](docs/ejecucion.md#docker).
 
 ## Tests
 
@@ -97,7 +100,7 @@ tests/
   Bots.Application.Tests/
   Bots.Infrastructure.Tests/   (incluye Fixtures/Gitea con el HTML de prueba)
 flyway/sql/             Migraciones V1 (esquema y datos), V2 (control de corridas) y V3 (claves de idempotencia)
-docs/                   blueprint.md (diseño) y runbook.md (operación)
+docs/                   blueprint.md (diseño), runbook.md (operación) y ejecucion.md (local y Docker)
 Dockerfile              Targets sqlserver, build y runtime (imagen del bot)
 docker-compose.yml      sql, sql-init, flyway y bot
 .env.example            Plantilla de variables (sin secretos)
@@ -105,34 +108,17 @@ docker-compose.yml      sql, sql-init, flyway y bot
 
 ## Correr el bot fuera de Docker
 
-Útil para depurar. Necesita SQL Server con las migraciones aplicadas (por ejemplo, levantando solo
-`docker compose up -d sql sql-init flyway`) y Chromium de Playwright instalado (ver Tests).
+Útil para depurar: SQL Server en Docker y el worker con `dotnet run`. Fuera de Docker el worker **no lee
+el `.env`**: los valores locales (cron cada 2 minutos, VisualDebug, SQL en `127.0.0.1,1433`) están en
+[appsettings.Development.json](src/Bots.Worker/appsettings.Development.json) y las contraseñas en
+**user-secrets** (fuera del repo), nunca en un `appsettings`.
 
-Las contraseñas van en **user-secrets** (fuera del repo), nunca en `appsettings.json`:
-
-```bash
-dotnet user-secrets --project src/Bots.Worker set "Sql:User" "bots_app"
-```
-
-```bash
-dotnet user-secrets --project src/Bots.Worker set "Sql:Password" "<APP_DB_PASSWORD>"
-```
+Guía paso a paso (PowerShell), con y sin simulación y problemas frecuentes:
+[docs/ejecucion.md](docs/ejecucion.md#local-dotnet-run). Resumen, con los user-secrets ya cargados:
 
 ```bash
-dotnet user-secrets --project src/Bots.Worker set "Gitea:User" "<usuario>"
+docker compose up -d sql sql-init flyway
 ```
-
-```bash
-dotnet user-secrets --project src/Bots.Worker set "Gitea:Password" "<contraseña>"
-```
-
-```bash
-dotnet user-secrets --project src/Bots.Worker set "Sql:TrustServerCertificate" "true"
-```
-
-`TrustServerCertificate=true` es solo para el SQL Server local de la PoC (certificado autofirmado del
-contenedor). Fuera de Docker, Gitea es `http://localhost:3000` y SQL `localhost,1433` (valores por defecto
-de `appsettings.json`). Los user-secrets solo se cargan en el entorno `Development`:
 
 ```bash
 DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
@@ -140,20 +126,19 @@ DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
 
 ## Ver lo que hace el bot (VisualDebug)
 
-Con `Gitea:VisualDebug=true` el bot dibuja un cursor (punto rojo, azul al pulsar) y mueve el mouse paso a
+Con `Gitea:VisualDebug=true` el bot dibuja un cursor (flecha negra, azul al pulsar) y mueve el mouse paso a
 paso hasta cada elemento que lee o pulsa. Una sola variable sirve para los dos entornos: el bot detecta si
 hay pantalla.
 
 - **Local** (hay pantalla): abre Chromium en ventana, ignora `Headless` y frena cada acción para seguirla
-  en vivo. Cada lectura abre su propia pestaña, así que verás pestañas abrirse y cerrarse.
-
-  ```bash
-  Gitea__VisualDebug=true DOTNET_ENVIRONMENT=Development dotnet run --project src/Bots.Worker
-  ```
+  en vivo. Cada lectura abre su propia pestaña, así que verás pestañas abrirse y cerrarse. Se activa con
+  `"VisualDebug": true` en `appsettings.Development.json`; pasos en
+  [docs/ejecucion.md](docs/ejecucion.md#local-con-simulación).
 
 - **Docker** (sin pantalla): sigue en headless y graba un video `.webm` por página en `./videos/<fecha>/`
   del host. Se activa con `GITEA_VISUAL_DEBUG=true` en `.env` y `docker compose up -d bot`. Cada video se
-  completa al cerrarse su página. En un host Linux, `./videos` debe ser escribible por el uid 1001.
+  completa al cerrarse su página. En un host Linux, `./videos` debe ser escribible por el uid 1001. Pasos en
+  [docs/ejecucion.md](docs/ejecucion.md#docker-con-simulación-videos).
 
 La contraseña se rellena de golpe (no tecla a tecla), pero los videos muestran los datos de los repos: no
 compartirlos ni versionarlos (`videos/` está en `.gitignore`). Solo para depurar: nunca en producción.
@@ -171,9 +156,16 @@ compartirlos ni versionarlos (`videos/` está en `.gitignore`). Solo para depura
 | `BOTS_RECOVERY_MAX_ATTEMPTS` | `Bots:Recovery:MaxAttempts` | Intentos por ocurrencia (default 3) |
 | `GITEA_VISUAL_DEBUG` | `Gitea:VisualDebug` | `true`: ver/grabar lo que hace el bot (default `false`) |
 
-Los parámetros de Polly (`Bots:Resilience:Sql` y `Bots:Resilience:Gitea`), los timeouts de Gitea y el
-umbral de corridas huérfanas tienen valores por defecto en `appsettings.json`. La configuración se valida
-al arrancar: si falta algo o el cron no es válido, el bot no arranca y el log dice qué corregir.
+Esta tabla es la de Docker. Con `dotnet run` el `.env` no se lee: las mismas claves .NET salen de
+`appsettings.Development.json` y de user-secrets (ver [docs/ejecucion.md](docs/ejecucion.md#cómo-lee-la-configuración)).
+
+Los parámetros de Polly (`Bots:Resilience:Sql` y `Bots:Resilience:Gitea`), los timeouts de Gitea
+(`Gitea:NavigationTimeout`, `Gitea:ActionTimeout`), `Gitea:MaxPages`, `Gitea:Headless`,
+`Gitea:VideoDirectory` y el umbral de corridas huérfanas tienen valores por defecto en `appsettings.json`;
+`Gitea:ChromiumSandbox` (`true`) y `Gitea:DiagnosticsDirectory` (vacío) tienen su valor por defecto en el
+código (ver el [runbook](docs/runbook.md)). En Docker se cambian con `Clave__Subclave` en el `environment`
+del compose. La configuración se valida al arrancar: si falta algo o el cron no es válido, el bot no
+arranca y el log dice qué corregir.
 
 
 ## Probar CI
