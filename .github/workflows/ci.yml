@@ -1,4 +1,5 @@
 # CI de la PoC (en producción será Azure DevOps). No publica imágenes ni usa secretos reales.
+# Las actions van fijadas por SHA (el comentario indica la versión); Dependabot las actualiza.
 name: ci
 
 on:
@@ -27,9 +28,9 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@67a3573c9a986a3f9c594539f4ab511d57bb3ce9 # v4.3.1
         with:
           dotnet-version: 10.x
 
@@ -45,6 +46,13 @@ jobs:
       - name: Instalar Chromium de Playwright
         run: pwsh tests/Bots.Infrastructure.Tests/bin/Release/net10.0/playwright.ps1 install --with-deps chromium
 
+      # Los tests lanzan Chromium con sandbox, como en producción (Gitea:ChromiumSandbox=true). Ubuntu 24.04
+      # restringe con AppArmor los user namespaces sin privilegios que necesita: sin esto, "No usable sandbox!".
+      - name: Permitir el sandbox de Chromium
+        run: |
+          f=/proc/sys/kernel/apparmor_restrict_unprivileged_userns
+          if [ -f "$f" ]; then echo 0 | sudo tee "$f"; fi
+
       # Los tests de SQL levantan SQL Server con Testcontainers (Docker viene en el runner).
       # La prueba contra un Gitea real se omite: no hay variables GITEA_E2E_*.
       - name: Tests
@@ -56,7 +64,7 @@ jobs:
 
       - name: Publicar resultados (.trx)
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: test-results
           path: TestResults/**/*.trx
@@ -67,14 +75,15 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       # .env efímero para este job: contraseñas aleatorias que solo viven en el runner. El resto de
       # variables (Gitea, cron) quedan con los placeholders de .env.example: el bot no se levanta aquí.
+      # Las contraseñas llevan ' y ; a propósito: comprueban que sql-init las escapa.
       - name: Preparar .env de CI
         run: |
           cp .env.example .env
-          pw() { echo "Ci7-$(openssl rand -hex 12)"; }
+          pw() { echo "Ci7';-$(openssl rand -hex 12)"; }
           sed -i -E \
             -e "s|^MSSQL_TAG=[^ ]*|MSSQL_TAG=${MSSQL_TAG}|" \
             -e "s|^MSSQL_SA_PASSWORD=CAMBIAR_ESTO|MSSQL_SA_PASSWORD=$(pw)|" \
@@ -91,6 +100,17 @@ jobs:
         run: |
           docker compose run --rm --no-deps sql-init
           docker compose run --rm --no-deps sql-init
+
+      # El usuario de la app entra con su contraseña (tal como la lee compose del .env, con su comilla), y
+      # un nombre de usuario que podría cerrar [ ] en el SQL se rechaza antes de ejecutar nada.
+      - name: Login de la app y validación de usuarios
+        run: |
+          docker compose run --rm --no-deps --entrypoint /bin/bash sql-init -c \
+            'SQLCMDPASSWORD="$APP_DB_PASSWORD" /opt/mssql-tools18/bin/sqlcmd -S sql -U "$APP_DB_USER" -d BotsDb -C -b -Q "SELECT 1" -o /dev/null'
+          if docker compose run --rm --no-deps -e APP_DB_USER='bad]user' sql-init; then
+            echo "sql-init aceptó un usuario inválido" >&2
+            exit 1
+          fi
 
       - name: flyway migrate
         run: docker compose run --rm --no-deps flyway migrate
@@ -111,7 +131,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
       - name: docker build (target runtime)
         run: docker build --target runtime -t bots-bot:ci .

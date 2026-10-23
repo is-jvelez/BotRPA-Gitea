@@ -1,0 +1,28 @@
+# Avisos y PRs automáticos de dependencias (además de las alertas de seguridad del repo).
+version: 2
+updates:
+  # Paquetes NuGet (Central Package Management: Directory.Packages.props).
+  - package-ecosystem: nuget
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      microsoft-extensions:
+        patterns: ["Microsoft.Extensions.*"]
+    ignore:
+      # Debe subir junto con la imagen base del Dockerfile (PLAYWRIGHT_TAG/PLAYWRIGHT_DIGEST): un PR que
+      # solo cambie el paquete dejaría el driver sin sus navegadores. Se actualiza a mano, ambos a la vez.
+      - dependency-name: Microsoft.Playwright
+
+  # Digest de la imagen del SDK (FROM literal del Dockerfile). Las imágenes con tag en ARG (SQL Server,
+  # Playwright) se actualizan a mano: ver comentarios del Dockerfile.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+
+  # Actions fijadas por SHA en .github/workflows.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

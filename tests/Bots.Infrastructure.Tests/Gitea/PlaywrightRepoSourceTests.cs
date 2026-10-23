@@ -166,7 +166,50 @@ public sealed class PlaywrightRepoSourceTests : IAsyncLifetime
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => source.GetRepoAsync("ana/con-readme", cts.Token));
     }
 
-    private PlaywrightRepoSource Source(string password = FakeGitea.Password)
+    [Fact]
+    public async Task Visual_debug_without_display_reads_the_same_data_and_records_videos()
+    {
+        var videos = Path.Combine(Path.GetTempPath(), "bots-videos-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            var source = Source(visualDebugVideos: videos);
+
+            var keys = await source.ListRepoKeysAsync(Ct);
+            var repo = await source.GetRepoAsync("ana/con-readme", Ct);
+            await source.DisposeAsync();
+
+            Assert.Equal(["ana/con-readme", "ana/muchas-ramas", "ana/sin-readme", "ana/vacio"], keys);
+            Assert.True(repo.HasReadme);
+            Assert.NotEmpty(Directory.GetFiles(videos, "*.webm", SearchOption.AllDirectories));
+        }
+        finally
+        {
+            if (Directory.Exists(videos))
+            {
+                Directory.Delete(videos, recursive: true);
+            }
+        }
+    }
+
+    [Fact]
+    public async Task Visual_debug_with_wrong_password_is_still_rejected()
+    {
+        var videos = Path.Combine(Path.GetTempPath(), "bots-videos-" + Guid.NewGuid().ToString("N"));
+        try
+        {
+            await Assert.ThrowsAsync<GiteaLoginException>(() => Source("incorrecta", visualDebugVideos: videos).ListRepoKeysAsync(Ct));
+        }
+        finally
+        {
+            if (Directory.Exists(videos))
+            {
+                Directory.Delete(videos, recursive: true);
+            }
+        }
+    }
+
+    /// <param name="visualDebugVideos">Con valor, VisualDebug sin pantalla grabando en esa carpeta.</param>
+    private PlaywrightRepoSource Source(string password = FakeGitea.Password, string? visualDebugVideos = null)
     {
         var options = new GiteaOptions
         {
@@ -175,13 +218,15 @@ public sealed class PlaywrightRepoSourceTests : IAsyncLifetime
             Password = password,
             NavigationTimeout = TimeSpan.FromSeconds(15),
             ActionTimeout = TimeSpan.FromSeconds(5),
+            VisualDebug = visualDebugVideos is not null,
+            VideoDirectory = visualDebugVideos ?? "videos",
         };
         var resilience = new GiteaResilience(
             new ResilienceOptions { MaxRetryAttempts = 2, BaseDelay = TimeSpan.FromMilliseconds(10), MaxDelay = TimeSpan.FromMilliseconds(50) },
             TimeProvider.System,
             NullLogger<GiteaResilience>.Instance);
 
-        var source = new PlaywrightRepoSource(options, resilience, new FakeTimeProvider(Now), NullLogger<PlaywrightRepoSource>.Instance);
+        var source = new PlaywrightRepoSource(options, resilience, new FakeTimeProvider(Now), NullLogger<PlaywrightRepoSource>.Instance, hasDisplay: false);
         _sources.Add(source);
         return source;
     }

@@ -118,8 +118,17 @@ El tag de la imagen base del target `runtime` (`PLAYWRIGHT_TAG` en el Dockerfile
 versión del paquete `Microsoft.Playwright` de `Directory.Packages.props`: el driver del paquete busca los
 navegadores de su misma versión en `/ms-playwright`. Para actualizar, cambiar ambos a la vez y reconstruir.
 El parche del runtime .NET de la imagen lo controla Microsoft (hoy 10.0.12, por debajo de los paquetes
-10.0.13): revisar al subir de versión. El Dockerfile da permiso de ejecución al driver (`chmod +x`),
-porque NuGet no lo conserva.
+10.0.13): revisar al subir de versión. El Dockerfile da permiso de ejecución al driver (`chmod +x` sobre el
+binario `node` de cualquier plataforma, x64 o arm64), porque NuGet no lo conserva.
+
+Todas las imágenes base (SQL Server, SDK, Playwright y Flyway) van fijadas por digest (`@sha256:…`), además
+del tag: un tag puede volver a publicarse con otro contenido, el digest no. Al cambiar un tag hay que cambiar
+su digest (`MSSQL_DIGEST`, `PLAYWRIGHT_DIGEST`). Dependabot (`.github/dependabot.yml`) propone cada semana
+las actualizaciones de NuGet, del digest del SDK y de las actions (fijadas por SHA); `Microsoft.Playwright`
+queda fuera porque debe subir junto con la imagen.
+
+Chromium corre con su sandbox (`Gitea:ChromiumSandbox`, activo por defecto). Dentro del contenedor necesita
+el perfil seccomp `docker/chromium-seccomp.json` (el oficial de Playwright: el de Docker más user namespaces).
 
 ## Límites conocidos de la PoC
 

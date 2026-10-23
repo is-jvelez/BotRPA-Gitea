@@ -26,12 +26,19 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
     private readonly Uri _baseUrl;
     private readonly string _basePath;
     private readonly SemaphoreSlim _gate = new(1, 1);
+    private readonly bool _hasDisplay;
 
     private IPlaywright? _playwright;
     private IBrowser? _browser;
     private IBrowserContext? _context;
 
     public PlaywrightRepoSource(GiteaOptions options, GiteaResilience resilience, TimeProvider timeProvider, ILogger<PlaywrightRepoSource> logger)
+        : this(options, resilience, timeProvider, logger, HasDisplay())
+    {
+    }
+
+    /// <param name="hasDisplay">Si hay pantalla para abrir el navegador en ventana (solo cuenta con VisualDebug).</param>
+    internal PlaywrightRepoSource(GiteaOptions options, GiteaResilience resilience, TimeProvider timeProvider, ILogger<PlaywrightRepoSource> logger, bool hasDisplay)
     {
         ArgumentNullException.ThrowIfNull(options);
         ArgumentNullException.ThrowIfNull(options.BaseUrl);
@@ -45,6 +52,7 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         // Con barra final, las rutas relativas se resuelven bajo un posible subpath (http://host/gitea/).
         _baseUrl = new Uri(options.BaseUrl.AbsoluteUri.TrimEnd('/') + "/");
         _basePath = _baseUrl.AbsolutePath.TrimEnd('/');
+        _hasDisplay = hasDisplay;
     }
 
     public async Task<IReadOnlyList<string>> ListRepoKeysAsync(CancellationToken ct)
@@ -97,30 +105,45 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
     }
 
     /// <summary>
-    /// Cada paso se ejecuta aunque falle el anterior (p. ej. el navegador ya murió): así nunca queda vivo
-    /// el proceso del driver de Playwright. La primera excepción se propaga al final.
+    /// Cada paso se ejecuta aunque falle el anterior (p. ej. el navegador ya murió), así que nunca queda vivo
+    /// el proceso del driver de Playwright. Cada fallo se registra en el log con su excepción y no se relanza:
+    /// un error al cerrar no debe ocultar otro ni interrumpir el apagado del host. Idempotente.
     /// </summary>
     public async ValueTask DisposeAsync()
     {
         try
         {
+            await CloseContextAsync();
+        }
+        catch (Exception ex)
+        {
+            LogDisposeStepFailed(_logger, ex, "contexto del navegador");
+        }
+
+        var browser = _browser;
+        _browser = null;
+        if (browser is not null)
+        {
             try
             {
-                await CloseContextAsync();
+                await browser.CloseAsync();
             }
-            finally
+            catch (Exception ex)
             {
-                var browser = _browser;
-                _browser = null;
-                if (browser is not null)
-                {
-                    await browser.CloseAsync();
-                }
+                LogDisposeStepFailed(_logger, ex, "navegador");
             }
+        }
+
+        try
+        {
+            _playwright?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            LogDisposeStepFailed(_logger, ex, "driver de Playwright");
         }
         finally
         {
-            _playwright?.Dispose();
             _playwright = null;
             _gate.Dispose();
         }
@@ -135,13 +158,35 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         _playwright ??= await Playwright.CreateAsync();
         if (_browser is null || !_browser.IsConnected)
         {
-            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions { Headless = _options.Headless });
+            var watchLive = _options.VisualDebug && _hasDisplay;
+            _browser = await _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+            {
+                Headless = !watchLive && _options.Headless,
+                SlowMo = watchLive ? VisualSlowMoMs : 0,
+                ChromiumSandbox = _options.ChromiumSandbox,
+            });
+
+            if (watchLive)
+            {
+                LogVisualDebugWindow(_logger);
+            }
         }
 
         // Idioma fijo: el formato de los números ("1,234") y los textos no dependen del host.
-        _context = await _browser.NewContextAsync(new BrowserNewContextOptions { Locale = "en-US" });
+        var contextOptions = new BrowserNewContextOptions { Locale = "en-US" };
+        if (_options.VisualDebug && !_hasDisplay)
+        {
+            contextOptions.RecordVideoDir = CreateVideoDirectory();
+            LogVisualDebugVideo(_logger, contextOptions.RecordVideoDir);
+        }
+
+        _context = await _browser.NewContextAsync(contextOptions);
         _context.SetDefaultNavigationTimeout((float)_options.NavigationTimeout.TotalMilliseconds);
         _context.SetDefaultTimeout((float)_options.ActionTimeout.TotalMilliseconds);
+        if (_options.VisualDebug)
+        {
+            await _context.AddInitScriptAsync(CursorScript);
+        }
 
         await WithPageAsync(page => LoginAsync(page, ct), ct);
     }
@@ -161,13 +206,25 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         await GotoAsync(page, GiteaSelectors.LoginPath, expectSession: false, ct);
         await RequireAsync(page, GiteaSelectors.LoginUserInput, "formulario de login");
 
-        await page.FillAsync(GiteaSelectors.LoginUserInput, _options.User);
+        if (_options.VisualDebug)
+        {
+            // El usuario se teclea para verlo; la contraseña se rellena de golpe para que no quede tecla a
+            // tecla en un video o una traza.
+            await ClickAsync(page, GiteaSelectors.LoginUserInput);
+            await page.Locator(GiteaSelectors.LoginUserInput).PressSequentiallyAsync(_options.User, new LocatorPressSequentiallyOptions { Delay = VisualTypingDelayMs });
+            await ClickAsync(page, GiteaSelectors.LoginPasswordInput);
+        }
+        else
+        {
+            await page.FillAsync(GiteaSelectors.LoginUserInput, _options.User);
+        }
+
         await page.FillAsync(GiteaSelectors.LoginPasswordInput, _options.Password);
 
         // Gitea responde al POST con una redirección si el login es correcto, o con la misma página y un
         // mensaje de error si no lo es.
         var response = await page.RunAndWaitForResponseAsync(
-            () => page.ClickAsync(GiteaSelectors.LoginSubmit),
+            () => ClickAsync(page, GiteaSelectors.LoginSubmit),
             r => r.Request.Method == "POST" && IsPath(r.Url, GiteaSelectors.LoginPath));
 
         if (response.Status is >= 300 and < 400)
@@ -284,7 +341,7 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
 
     private async Task<RepoSnapshot> ReadRepoAsync(IPage page, string key, CancellationToken ct)
     {
-        await GotoAsync(page, $"/{key}", expectSession: true, ct);
+        await GotoAsync(page, GiteaSelectors.RepoPath(key), expectSession: true, ct);
 
         var description = await ReadDescriptionAsync(page);
         var isEmpty = await page.Locator(GiteaSelectors.EmptyRepoMarker).CountAsync() > 0;
@@ -483,6 +540,11 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
             throw new GiteaPageStructureException(
                 $"No se encontró el {what} ('{selector}') en {page.Url}.{(saved is null ? string.Empty : $" HTML guardado en {saved}.")}");
         }
+
+        if (_options.VisualDebug)
+        {
+            await PointAtAsync(page.Locator(selector).First);
+        }
     }
 
     private async Task<string> RequireTextAsync(IPage page, string selector, string what)
@@ -514,6 +576,78 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
         }
     }
 
+    // ------------------------------------------------------------------ depuración visual (VisualDebug)
+
+    private const float VisualSlowMoMs = 300;
+    private const float VisualTypingDelayMs = 80;
+    private const int VisualMouseSteps = 25;
+
+    /// <summary>
+    /// Punto rojo que sigue al mouse (azul mientras el botón está pulsado). Chromium no dibuja el cursor en la
+    /// página, así que sin esto no se ve en la ventana ni en el video. pointer-events:none: no tapa los clics.
+    /// </summary>
+    private const string CursorScript = """
+        addEventListener('DOMContentLoaded', () => {
+          const c = document.createElement('div');
+          c.style.cssText = 'position:fixed;left:-20px;top:-20px;width:14px;height:14px;border-radius:50%;' +
+            'background:rgba(255,0,0,.7);border:2px solid #fff;pointer-events:none;z-index:2147483647;' +
+            'transform:translate(-50%,-50%)';
+          document.documentElement.appendChild(c);
+          addEventListener('mousemove', e => { c.style.left = e.clientX + 'px'; c.style.top = e.clientY + 'px'; }, true);
+          addEventListener('mousedown', () => c.style.background = 'rgba(0,0,255,.9)', true);
+          addEventListener('mouseup', () => c.style.background = 'rgba(255,0,0,.7)', true);
+        });
+        """;
+
+    /// <summary>Hay pantalla salvo en Linux sin servidor gráfico (p. ej. el contenedor Docker).</summary>
+    internal static bool HasDisplay() =>
+        !OperatingSystem.IsLinux()
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("DISPLAY"))
+        || !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("WAYLAND_DISPLAY"));
+
+    /// <summary>Con VisualDebug, lleva el mouse hasta el elemento paso a paso antes de pulsarlo.</summary>
+    private async Task ClickAsync(IPage page, string selector)
+    {
+        if (_options.VisualDebug)
+        {
+            await PointAtAsync(page.Locator(selector).First);
+        }
+
+        await page.ClickAsync(selector);
+    }
+
+    /// <summary>Mueve el mouse al centro del elemento. Si no es visible (p. ej. un meta), no hace nada.</summary>
+    private static async Task PointAtAsync(ILocator locator)
+    {
+        if (!await locator.IsVisibleAsync())
+        {
+            return;
+        }
+
+        await locator.ScrollIntoViewIfNeededAsync();
+        var box = await locator.BoundingBoxAsync();
+        if (box is not null)
+        {
+            await locator.Page.Mouse.MoveAsync(box.X + (box.Width / 2), box.Y + (box.Height / 2), new MouseMoveOptions { Steps = VisualMouseSteps });
+        }
+    }
+
+    /// <summary>Una subcarpeta por corrida; falla con un mensaje claro si no se puede escribir (volumen sin montar).</summary>
+    private string CreateVideoDirectory()
+    {
+        var path = Path.GetFullPath(Path.Combine(_options.VideoDirectory, $"{_timeProvider.GetUtcNow():yyyyMMddTHHmmss}"));
+        try
+        {
+            Directory.CreateDirectory(path);
+            return path;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            throw new GiteaConfigurationException(
+                $"VisualDebug no puede grabar videos en '{path}' ({ex.Message}). En Docker hay que montar el volumen de Gitea:VideoDirectory.");
+        }
+    }
+
     /// <summary>Extrae un entero de textos como "6", "1,234", "1.234" o "2 Closed".</summary>
     internal static int ParseCount(string text)
     {
@@ -538,6 +672,15 @@ public sealed partial class PlaywrightRepoSource : IRepoSource, IAsyncDisposable
     [LoggerMessage(Level = LogLevel.Debug, Message = "'{RepoKey}' no tiene la sección de pull requests (404): 0 PRs.")]
     private static partial void LogPullsDisabled(ILogger logger, string repoKey);
 
+    [LoggerMessage(Level = LogLevel.Warning, Message = "Al liberar PlaywrightRepoSource falló el cierre del {Step}; se continúa con el resto.")]
+    private static partial void LogDisposeStepFailed(ILogger logger, Exception exception, string step);
+
     [LoggerMessage(Level = LogLevel.Warning, Message = "No se pudo guardar el HTML de diagnóstico de {Url}.")]
     private static partial void LogDiagnosticsFailed(ILogger logger, Exception exception, string url);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "VisualDebug activo: navegador en ventana y acciones ralentizadas. No usar en producción.")]
+    private static partial void LogVisualDebugWindow(ILogger logger);
+
+    [LoggerMessage(Level = LogLevel.Warning, Message = "VisualDebug activo sin pantalla: se graban videos en {VideoDirectory}. No usar en producción.")]
+    private static partial void LogVisualDebugVideo(ILogger logger, string videoDirectory);
 }

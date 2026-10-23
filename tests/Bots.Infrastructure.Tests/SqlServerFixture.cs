@@ -19,8 +19,8 @@ namespace Bots.Infrastructure.Tests;
 /// </summary>
 public sealed partial class SqlServerFixture : IAsyncLifetime
 {
-    // Mismo tag que .env (MSSQL_TAG) para probar contra la versión real.
-    private const string Image = "mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04";
+    // Mismo tag y digest que el Dockerfile/.env (MSSQL_TAG, MSSQL_DIGEST) para probar contra la versión real.
+    private const string Image = "mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04@sha256:4402d880dd4c34bfa7d8705e56a86cd6c88da80a1f6bbbe741f999e76264a090";
     private const string AppUser = "bots_app_test";
 
     private readonly MsSqlContainer _container = new MsSqlBuilder(Image).Build();
