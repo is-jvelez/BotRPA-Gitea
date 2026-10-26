@@ -48,6 +48,26 @@ RUN dotnet publish src/Bots.Worker/Bots.Worker.csproj -c Release --no-restore -o
     && chmod +x $node_bins
 
 # ---------------------------------------------------------------------------
+# Target `supercronic`: cron para contenedores, solo lo usa el modo RunOnce
+# (docker-compose.cron.yml). Binario estático de GitHub verificado por SHA-256 (asset de la release).
+# Al cambiar la versión hay que cambiar también los dos SHA-256.
+# ---------------------------------------------------------------------------
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS supercronic
+ARG TARGETARCH
+ARG SUPERCRONIC_VERSION=v0.2.49
+ARG SUPERCRONIC_SHA256_AMD64=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1
+ARG SUPERCRONIC_SHA256_ARM64=02aa0cb229ba09050cba6638059dadb9eedc2276632ea43d6a57a2f8c1629dd5
+RUN arch="${TARGETARCH:-amd64}" \
+    && case "$arch" in \
+         amd64) sha="$SUPERCRONIC_SHA256_AMD64" ;; \
+         arm64) sha="$SUPERCRONIC_SHA256_ARM64" ;; \
+         *) echo "supercronic: arquitectura no soportada: $arch" >&2; exit 1 ;; \
+       esac \
+    && curl -fsSL -o /supercronic "https://github.com/aptible/supercronic/releases/download/${SUPERCRONIC_VERSION}/supercronic-linux-${arch}" \
+    && echo "$sha  /supercronic" | sha256sum -c - \
+    && chmod 0755 /supercronic
+
+# ---------------------------------------------------------------------------
 # Target `runtime` (por defecto). La imagen de Playwright ya trae el runtime de .NET 10
 # (verificado en la Fase 3 con `dotnet --list-runtimes`: Microsoft.NETCore.App 10.0.12),
 # así que el publish es framework-dependent. Los navegadores vienen en /ms-playwright;
@@ -57,6 +77,8 @@ FROM mcr.microsoft.com/playwright/dotnet:${PLAYWRIGHT_TAG}${PLAYWRIGHT_DIGEST} A
 WORKDIR /app
 # Los archivos quedan de root y solo lectura para el usuario de ejecución.
 COPY --from=build /app/publish .
+# Solo se usa con docker-compose.cron.yml; el modo continuo no lo ejecuta.
+COPY --from=supercronic /supercronic /usr/local/bin/supercronic
 # Usuario no root que trae la imagen de Playwright (uid 1001).
 USER pwuser
 ENTRYPOINT ["dotnet", "Bots.Worker.dll"]
