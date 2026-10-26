@@ -101,6 +101,7 @@ Reintento con backoff exponencial + jitter y, dentro, circuit breaker; configura
 | Decisión | Alternativa descartada | Motivo |
 |---|---|---|
 | Cronos dentro de un `BackgroundService` | Quartz.NET | Un solo job: Quartz añade su propio almacén, clustering y configuración que aquí no aportan; la idempotencia y el lock ya los resuelve la BD. |
+| Modo `RunOnce` opcional (`Bots:Mode`) lanzado por un cron externo (supercronic en `docker-compose.cron.yml`) | Solo el proceso continuo | Sin consumo entre corridas y un proceso limpio por corrida; es el mismo modelo que un CronJob de Kubernetes o un job programado de Container Apps. Reutiliza la recuperación y el lock: corre la ocurrencia más reciente ya llegada. |
 | Dapper + SQL explícito | EF Core | SQL visible y auditable (MERGE, applock, guardas), sin migraciones de EF (las hace Flyway) ni un modelo de cambios que no se necesita. |
 | .NET 10 | Python | Stack del equipo, tipado, Worker Services y la misma imagen Playwright soportada oficialmente. |
 | RPA sobre la UI (Playwright) | API REST de Gitea | El objetivo es automatizar sitios sin API oficial. Verificado en Gitea 28.2 que el conteo de commits por rama de la UI coincide con `git rev-list --count`. |

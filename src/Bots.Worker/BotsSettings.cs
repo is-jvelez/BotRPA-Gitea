@@ -7,6 +7,12 @@ public sealed class BotsSettings
 {
     public const string SectionName = "Bots";
 
+    /// <summary>
+    /// <c>Continuous</c> (default): el proceso queda vivo y programa las corridas con Cronos.
+    /// <c>RunOnce</c>: corre la ocurrencia que toca y termina; lo lanza un cron externo (BOTS_MODE o --Bots:Mode=RunOnce).
+    /// </summary>
+    public BotsMode Mode { get; set; } = BotsMode.Continuous;
+
     public ScheduleSettings Schedule { get; set; } = new();
 
     /// <summary>Si es <c>false</c> (default), 0 repos en la fuente deja la corrida en Failed.</summary>
@@ -15,6 +21,12 @@ public sealed class BotsSettings
     public RecoverySettings Recovery { get; set; } = new();
 
     public ResilienceSettings Resilience { get; set; } = new();
+}
+
+public enum BotsMode
+{
+    Continuous,
+    RunOnce,
 }
 
 public sealed class ScheduleSettings

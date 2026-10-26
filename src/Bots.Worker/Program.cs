@@ -49,8 +49,19 @@ builder.Services.AddSingleton(sp => new SyncReposSchedulerOptions { StaleRunThre
 builder.Services.AddSingleton<SyncReposJob>();
 builder.Services.AddSingleton<PendingOccurrenceCalculator>();
 builder.Services.AddSingleton<SyncReposScheduler>();
+builder.Services.AddSingleton(sp => new SyncReposRunOnceOptions { StaleRunThreshold = sp.GetRequiredService<BotsSettings>().Recovery.StaleRunThreshold });
+builder.Services.AddSingleton<SyncReposRunOnce>();
 
-builder.Services.AddHostedService<CronWorker>();
+// El modo se lee antes de construir el host: decide qué servicio se registra. Un valor inválido lo
+// rechaza el binder al arrancar.
+if (builder.Configuration.GetSection(BotsSettings.SectionName).Get<BotsSettings>()?.Mode == BotsMode.RunOnce)
+{
+    builder.Services.AddHostedService<RunOnceWorker>();
+}
+else
+{
+    builder.Services.AddHostedService<CronWorker>();
+}
 
 var host = builder.Build();
 await host.RunAsync();

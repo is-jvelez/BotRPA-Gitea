@@ -1,0 +1,26 @@
+# Override: modo "cron externo + worker de una corrida".
+#   docker compose -f docker-compose.yml -f docker-compose.cron.yml up -d --build
+#
+# El contenedor `bot` ya no programa las corridas con Cronos: supercronic (PID 1) lee el mismo
+# BOTS_SCHEDULE_CRON y, en cada ocurrencia, lanza `dotnet Bots.Worker.dll --Bots:Mode=RunOnce`, que corre la
+# ocurrencia que toca y termina (código 0 = OK, 1 = Failed/excepción; supercronic lo registra).
+# Entre corridas solo queda vivo supercronic: ni .NET ni Chromium. Como PID 1 recoge los procesos huérfanos
+# del navegador al terminar cada corrida (warnings "reaper cleanup" en el log: son esperados).
+#
+# Garantías que no cambian: recuperación de pendientes, applock y UNIQUE de job_runs (sin duplicados ni
+# solapamiento). supercronic además no lanza una corrida si la anterior sigue en curso.
+# Apagado: Docker envía SIGTERM a supercronic, que espera a la corrida en curso pero no se lo reenvía; si no
+# termina en stop_grace_period, Docker la mata y la fila queda Running hasta que la siguiente ejecución la
+# marca Abandoned y la retoma.
+services:
+  bot:
+    environment:
+      # Zona en la que supercronic evalúa el cron (la misma que usa la app para calcular la ocurrencia).
+      TZ: ${BOTS_SCHEDULE_TIMEZONE:-America/Guayaquil}
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -eu
+        printf '%s dotnet /app/Bots.Worker.dll --Bots:Mode=RunOnce\n' "$$Bots__Schedule__Cron" > /tmp/crontab
+        supercronic -test -no-reap /tmp/crontab
+        exec supercronic -passthrough-logs /tmp/crontab

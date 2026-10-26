@@ -297,6 +297,45 @@ Al terminar, vuelve a `GITEA_VISUAL_DEBUG=false` (y el cron a `"0 * * * *"`), re
 Remove-Item videos\* -Recurse
 ```
 
+### Modo cron externo (supercronic + RunOnce)
+
+Por defecto el bot es un proceso que no termina y programa las corridas con Cronos. Con el override
+`docker-compose.cron.yml`, **supercronic** (un cron para contenedores) queda como PID 1 del contenedor
+`bot`: lee el mismo `BOTS_SCHEDULE_CRON` y en cada ocurrencia lanza
+`dotnet Bots.Worker.dll --Bots:Mode=RunOnce`, que corre la ocurrencia que toca y termina. Entre corridas
+solo queda vivo supercronic (ni .NET ni Chromium). `GITEA_VISUAL_DEBUG` funciona igual en los dos modos.
+
+Levantar (o pasar del modo continuo a este; compose recrea el bot):
+
+```powershell
+docker compose -f docker-compose.yml -f docker-compose.cron.yml up -d --build
+```
+
+En los logs, cada corrida aparece entre las líneas de supercronic `starting` y `job succeeded` /
+`job failed` (código de salida 1 = corrida `Failed` o excepción), con los logs JSON del bot en medio:
+
+```powershell
+docker compose logs -f bot
+```
+
+Lanzar una corrida a mano sin esperar al cron (corre la ocurrencia más reciente; si ya está completada,
+no hace nada y sale con 0):
+
+```powershell
+docker compose exec bot dotnet /app/Bots.Worker.dll --Bots:Mode=RunOnce
+```
+
+Volver al modo continuo:
+
+```powershell
+docker compose up -d bot
+```
+
+Lo que no cambia: recuperación de ocurrencias pendientes, applock y `UNIQUE` de `job_runs` (sin duplicados ni
+solapamiento; supercronic además no lanza una corrida si la anterior sigue en curso). Lo que sí cambia: al
+detener el contenedor, supercronic espera a la corrida en curso pero no le reenvía la señal; si no termina en
+60 s Docker la mata, la fila queda `Running` y la siguiente ejecución la marca `Abandoned` y la retoma.
+
 ### Volver a local
 
 ```powershell
