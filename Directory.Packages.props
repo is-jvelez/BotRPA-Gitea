@@ -14,7 +14,7 @@
     <!-- IMPORTANTE: debe coincidir con el tag de la imagen base del target `runtime` del Dockerfile
          (mcr.microsoft.com/playwright/dotnet:v<versión>-noble). Cambiar ambos a la vez. -->
     <PackageVersion Include="Microsoft.Playwright" Version="1.63.0" />
-    <PackageVersion Include="Polly.Core" Version="8.8.0" />
+    <PackageVersion Include="Polly.Core" Version="8.9.0" />
     <PackageVersion Include="Cronos" Version="0.13.0" />
     <!-- Worker -->
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
