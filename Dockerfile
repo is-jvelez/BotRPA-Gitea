@@ -27,7 +27,7 @@ FROM mcr.microsoft.com/mssql/server:${MSSQL_TAG}${MSSQL_DIGEST} AS sqlserver
 # ---------------------------------------------------------------------------
 # Target `build`. Tag y digest literales para que Dependabot pueda actualizar el digest.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:747cbade5bfd918a175ac32f8f1d931edec2c7d0d5397a3de72eaef1ac1f66d2 AS build
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS build
 WORKDIR /src
 
 # Primero solo los archivos de proyecto: la capa de restore se reutiliza mientras no
@@ -52,7 +52,7 @@ RUN dotnet publish src/Bots.Worker/Bots.Worker.csproj -c Release --no-restore -o
 # (docker-compose.cron.yml). Binario estático de GitHub verificado por SHA-256 (asset de la release).
 # Al cambiar la versión hay que cambiar también los dos SHA-256.
 # ---------------------------------------------------------------------------
-FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:0d99ebf1ccad15037b5c98c9fe8979d6b8dbac23812feae2277a0b277b5c5ffa AS supercronic
+FROM mcr.microsoft.com/dotnet/sdk:10.0@sha256:de4fe90a98845d75910b9769662465c84de1a934665c431279d1382b2bddc02b AS supercronic
 ARG TARGETARCH
 ARG SUPERCRONIC_VERSION=v0.2.49
 ARG SUPERCRONIC_SHA256_AMD64=a53ae236602c7338aba3fbaff40bda6300eae3b9fedb8261eb06cfe3724430c1
