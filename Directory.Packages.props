@@ -20,7 +20,7 @@
     <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
     <!-- Tests -->
     <!-- xunit.v3 corre sobre Microsoft.Testing.Platform (activado en global.json); no usa VSTest. -->
-    <PackageVersion Include="xunit.v3" Version="4.0.2" />
+    <PackageVersion Include="xunit.v3" Version="4.0.3" />
     <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
     <PackageVersion Include="Testcontainers.MsSql" Version="4.16.0" />
   </ItemGroup>
