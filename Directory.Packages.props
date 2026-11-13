@@ -7,7 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Application -->
-    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="11.0.0" />
     <!-- Infrastructure -->
     <PackageVersion Include="Dapper" Version="2.1.89" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
@@ -17,11 +17,11 @@
     <PackageVersion Include="Polly.Core" Version="8.8.0" />
     <PackageVersion Include="Cronos" Version="0.13.0" />
     <!-- Worker -->
-    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="10.0.13" />
+    <PackageVersion Include="Microsoft.Extensions.Hosting" Version="11.0.0" />
     <!-- Tests -->
     <!-- xunit.v3 corre sobre Microsoft.Testing.Platform (activado en global.json); no usa VSTest. -->
     <PackageVersion Include="xunit.v3" Version="4.0.2" />
-    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="10.11.0" />
+    <PackageVersion Include="Microsoft.Extensions.TimeProvider.Testing" Version="11.0.0" />
     <PackageVersion Include="Testcontainers.MsSql" Version="4.16.0" />
   </ItemGroup>
   <ItemGroup>
