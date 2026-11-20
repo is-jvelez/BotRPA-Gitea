@@ -9,7 +9,7 @@
     <!-- Application -->
     <PackageVersion Include="Microsoft.Extensions.Logging.Abstractions" Version="10.0.13" />
     <!-- Infrastructure -->
-    <PackageVersion Include="Dapper" Version="2.1.89" />
+    <PackageVersion Include="Dapper" Version="2.1.100" />
     <PackageVersion Include="Microsoft.Data.SqlClient" Version="7.1.1" />
     <!-- IMPORTANTE: debe coincidir con el tag de la imagen base del target `runtime` del Dockerfile
          (mcr.microsoft.com/playwright/dotnet:v<versión>-noble). Cambiar ambos a la vez. -->
